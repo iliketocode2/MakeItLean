@@ -83,13 +83,23 @@ theorem step_spec {t : Tree} (hw : Store.WellFormed t.toList) (c : Cmd ByteArray
       congr 1
     · exact ⟨rfl, rfl⟩
 
-/-- Running commands with `Core.step` (same shape as the spec's `Impl.runFrom`). -/
-def runCore (t : Tree) : List (Cmd ByteArray) → Tree × List (Response ByteArray)
-  | [] => (t, [])
-  | c :: cs =>
-    let (t', r) := Core.step t c
-    let (t'', rs) := runCore t' cs
-    (t'', r :: rs)
+/-- Run a step function over a list of commands. Type-generic on purpose: Lean reuses `match`
+helpers of identical (monomorphic) shape, and a monomorphic copy of the spec's `Impl.runFrom`
+here would make the generated solution's `Impl.runFrom` compile differently from the spec's. -/
+def runWith {σ γ ρ : Type} (st : σ → γ → σ × ρ) (s : σ) : List γ → σ × List ρ
+  | [] => (s, [])
+  | c :: cs => ((runWith st (st s c).1 cs).1, (st s c).2 :: (runWith st (st s c).1 cs).2)
+
+/-- Running commands with `Core.step`. -/
+abbrev runCore (t : Tree) (cmds : List (Cmd ByteArray)) : Tree × List (Response ByteArray) :=
+  runWith Core.step t cmds
+
+/-- The spec's `runTree` is `runWith`; applied to the core step, it is `runCore`. -/
+theorem runTree_eq (st : Tree → Cmd ByteArray → Tree × Response ByteArray) (t : Tree)
+    (cmds : List (Cmd ByteArray)) : runTree st t cmds = runWith st t cmds := by
+  induction cmds generalizing t with
+  | nil => rfl
+  | cons c cs ih => simp only [runTree, runWith, ih]
 
 theorem runCore_spec : ∀ (cmds : List (Cmd ByteArray)) {t : Tree}, Store.WellFormed t.toList →
     (runCore t cmds).1.toList = (runFrom t.toList (cmds.map (Cmd.map toBytes))).1 ∧
@@ -100,7 +110,7 @@ theorem runCore_spec : ∀ (cmds : List (Cmd ByteArray)) {t : Tree}, Store.WellF
     have hw' : Store.WellFormed (Core.step t c).1.toList := by rw [h1]; exact step_wellFormed hw _
     obtain ⟨ih1, ih2⟩ := runCore_spec cs hw'
     rw [h1] at ih1 ih2
-    simp only [runCore, runFrom, List.map_cons]
+    simp only [runCore, runWith, runFrom, List.map_cons]
     exact ⟨ih1, by rw [← h2, ← ih2]⟩
 
 /-- `impl_run_eq` and `impl_toList_eq` for `Core.step`, from the empty tree. -/

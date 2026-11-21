@@ -1,5 +1,5 @@
 import LeanKVImpl.Core.Log
-import LeanKV.Spec.Store
+import LeanKVSol.Base.Store
 
 /-!
 # LeanKV core: the durable store (Stage 3)

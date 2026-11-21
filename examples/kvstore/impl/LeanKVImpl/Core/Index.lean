@@ -1,4 +1,4 @@
-import LeanKV.Spec.Contract
+import LeanKVSol.Base.Contract
 
 /-!
 # LeanKV core: the in-memory index (Stage 3)

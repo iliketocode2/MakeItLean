@@ -170,32 +170,40 @@ monad with file operations. -/
 def Impl.exec {m : Type → Type} [Monad m] [LogFile m] (h : Handle) (c : Cmd ByteArray) :
     m (Handle × Reply ByteArray) := sorry
 
-/-! ## Defined from the holes -/
+/-! ## Sessions and `check`, parameterized by the implementation
 
-/-- English: Run commands one after another on an open store, returning the final store and
-every reply in order. -/
-def Impl.execAll {m : Type → Type} [Monad m] [LogFile m] (h : Handle) :
+Spec definitions never call a hole themselves; they take the implementation's functions as
+parameters, and only the theorems below name the holes. (A definition that called a hole would
+compile differently once the hole is filled, and the comparator would reject it.)
+-/
+
+/-- English: Run commands one after another on an open store with exec function `ex`, returning
+the final store and every reply in order. -/
+def execAllWith {m : Type → Type} [Monad m]
+    (ex : Handle → Cmd ByteArray → m (Handle × Reply ByteArray)) (h : Handle) :
     List (Cmd ByteArray) → m (Handle × List (Reply ByteArray))
   | [] => pure (h, [])
   | c :: cs => do
-    let (h', r) ← Impl.exec h c
-    let (h'', rs) ← Impl.execAll h' cs
+    let (h', r) ← ex h c
+    let (h'', rs) ← execAllWith ex h' cs
     pure (h'', r :: rs)
 
-/-- English: One session: open the store, then run the commands. -/
-def Impl.session {m : Type → Type} [Monad m] [LogFile m] (cmds : List (Cmd ByteArray)) :
+/-- English: One session: open the store with `op`, then run the commands with `ex`. -/
+def sessionWith {m : Type → Type} [Monad m] (op : m (Except (Reply ByteArray) Handle))
+    (ex : Handle → Cmd ByteArray → m (Handle × Reply ByteArray)) (cmds : List (Cmd ByteArray)) :
     m (Except (Reply ByteArray) (Handle × List (Reply ByteArray))) := do
-  match ← Impl.openStore with
+  match ← op with
   | .error r => pure (.error r)
-  | .ok h => .ok <$> Impl.execAll h cmds
+  | .ok h => .ok <$> execAllWith ex h cmds
 
-/-- English: The `check` command (R21): read the log and report the recovery outcome. It only
-reads, so it cannot modify the log. -/
-def storeCheck {m : Type → Type} [Monad m] [LogFile m] : m (Reply ByteArray) := do
+/-- English: The `check` command (R21), using recovery function `rec`: read the log and report
+the recovery outcome. It only reads, so it cannot modify the log. -/
+def checkWith {m : Type → Type} [Monad m] [LogFile m] (rec : ByteArray → Recovery ByteArray) :
+    m (Reply ByteArray) := do
   match ← LogFile.readAll with
   | none => pure (.ioError ByteArray.empty)
   | some b =>
-    pure (match Impl.recover b with
+    pure (match rec b with
       | .ok bs n t => .log bs.length n t
       | .corrupt p => .corrupt p)
 
@@ -230,7 +238,7 @@ the reference model does, starting from the state the log stands for (R4–R10).
 holds exactly the reference store, and its height is within the R17 bound. -/
 theorem store_no_faults {c0 : Bytes} {s0 : Store} (hs0 : logState c0 = some s0)
     (cmds : List (Cmd ByteArray)) :
-    ∃ h rs, ((Impl.session (m := FsM) cmds).run (startState c0 [])).1 = .ok (h, rs) ∧
+    ∃ h rs, ((sessionWith (m := FsM) Impl.openStore Impl.exec cmds).run (startState c0 [])).1 = .ok (h, rs) ∧
       repliesMatch rs (runFrom s0 (cmds.map (Cmd.map toBytes))).2 = true ∧
       h.index.toList = (runFrom s0 (cmds.map (Cmd.map toBytes))).1 ∧
       h.index.height ≤ 3 * Nat.log2 (h.index.size + 1) + 2 := sorry
@@ -245,7 +253,7 @@ then crash in any allowed way.
 theorem store_crash_consistent {c0 : Bytes} {s0 : Store} (hs0 : logState c0 = some s0)
     (cmds : List (Cmd ByteArray)) (φ : List Fault) (ch : CrashChoice) :
     let scmds := cmds.map (Cmd.map toBytes)
-    let out := (Impl.session (m := FsM) cmds).run (startState c0 φ)
+    let out := (sessionWith (m := FsM) Impl.openStore Impl.exec cmds).run (startState c0 φ)
     let c1 := crashOutcome out.2.disk ch
     match out.1 with
     | .error r => r.isIOError = true ∧ logState c1 = some s0
@@ -261,16 +269,16 @@ with `ERR CORRUPT p` (or with an I/O error, if reading fails), and the log is le
 was. -/
 theorem store_refuses_corrupt {c0 : Bytes} {p : Nat} (hc : recover c0 = .corrupt p)
     (cmds : List (Cmd ByteArray)) (φ : List Fault) :
-    let out := (Impl.session (m := FsM) cmds).run (startState c0 φ)
+    let out := (sessionWith (m := FsM) Impl.openStore Impl.exec cmds).run (startState c0 φ)
     (out.1 = .error (.corrupt p) ∨ ∃ d, out.1 = .error (.ioError d)) ∧
       out.2.disk = ⟨c0, c0⟩ := sorry
 
 /-- English: `check` never modifies the log (R21), and it reports the reference recovery
 outcome. -/
 theorem storeCheck_spec (st : FsState) :
-    ((storeCheck (m := FsM)).run st).2.disk = st.disk ∧
-      (((storeCheck (m := FsM)).run st).1.isIOError = true ∨
-        ((storeCheck (m := FsM)).run st).1.map toBytes =
+    ((checkWith (m := FsM) Impl.recover).run st).2.disk = st.disk ∧
+      (((checkWith (m := FsM) Impl.recover).run st).1.isIOError = true ∨
+        ((checkWith (m := FsM) Impl.recover).run st).1.map toBytes =
           match recover st.disk.content with
           | .ok bs n t => .log bs.length n t
           | .corrupt p => .corrupt p) := sorry

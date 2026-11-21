@@ -1,4 +1,4 @@
-import LeanKV.Spec.Bytes
+import LeanKVSol.Base.Bytes
 
 /-! Foundations: `ByteArray` as the spec's byte list (Stage 4). -/
 

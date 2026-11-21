@@ -65,4 +65,39 @@ elab "#assert_english_docs " pfx:ident : command => do
     throwError m!"English-doc gate: {missing.size} declaration(s) lack an `English:` doc:\n\
       {"\n".intercalate (missing.toList.map toString)}"
 
+/-- The spec's implementation holes: declarations whose doc says `IMPLEMENTATION HOLE`. -/
+def holeNames (pfx : Name) : CommandElabM (Array Name) := do
+  let env ← getEnv
+  let mut hs := #[]
+  for (n, _) in env.constants.toList do
+    let some idx := env.getModuleIdxFor? n | continue
+    let some mod := env.header.moduleNames[idx.toNat]? | continue
+    unless pfx.isPrefixOf mod do continue
+    if let some d ← findDocString? env n then
+      if (d.splitOn "IMPLEMENTATION HOLE").length > 1 then
+        hs := hs.push n
+  return hs
+
+/-- `#assert_holes_only_in_theorems Pfx`: no definition (including compiler-generated helpers)
+in modules under `Pfx` may use an implementation hole. Holes may appear only in theorem
+statements. A definition that used a hole would compile differently once the hole is filled,
+and `lake comparator` would then reject every solution. -/
+elab "#assert_holes_only_in_theorems " pfx:ident : command => do
+  let env ← getEnv
+  let holes ← holeNames pfx.getId
+  if holes.isEmpty then throwError "no implementation holes found under {pfx.getId}"
+  let mut bad := #[]
+  for (n, ci) in env.constants.toList do
+    let some idx := env.getModuleIdxFor? n | continue
+    let some mod := env.header.moduleNames[idx.toNat]? | continue
+    unless pfx.getId.isPrefixOf mod do continue
+    if holes.contains n then continue
+    let .defnInfo d := ci | continue
+    let used := d.value.getUsedConstants.filter holes.contains
+    unless used.isEmpty do bad := bad.push (n, used)
+  if bad.isEmpty then
+    logInfo m!"Hole gate: OK ({holes.size} holes, used only in theorem statements)"
+  else
+    throwError m!"Hole gate: definitions use implementation holes: {bad.toList}"
+
 end LeanKV.Tools

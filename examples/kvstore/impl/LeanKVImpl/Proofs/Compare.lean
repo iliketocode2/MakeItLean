@@ -1,6 +1,6 @@
 import LeanKVImpl.Proofs.Bytes
 import LeanKVImpl.Core.Index
-import LeanKV.Spec.Properties
+import LeanKVSol.Base.Properties
 
 /-! `cmpBytes` agrees with the spec's key order `bytesLt` (Stage 4). -/
 

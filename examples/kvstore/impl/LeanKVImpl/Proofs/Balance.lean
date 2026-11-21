@@ -208,7 +208,7 @@ theorem bal_step {t : Tree} (hb : Bal t) (c : Cmd ByteArray) : Bal (Core.step t 
 
 theorem bal_runCore : ∀ (cmds : List (Cmd ByteArray)) {t : Tree}, Bal t → Bal (runCore t cmds).1
   | [], _, hb => hb
-  | c :: cs, t, hb => by simp only [runCore]; exact bal_runCore cs (bal_step hb c)
+  | c :: cs, t, hb => by simp only [runCore, runWith]; exact bal_runCore cs (bal_step hb c)
 
 /-- `impl_height_le` for `Core.step`. -/
 theorem core_height_le (cmds : List (Cmd ByteArray)) :

@@ -51,37 +51,36 @@ working on `ByteArray`s: the new tree and the answer. The implementer fills this
 else may change. -/
 def Impl.step : Tree → Cmd ByteArray → Tree × Response ByteArray := sorry
 
-/-- English: Run commands one after another on the index with `Impl.step`, starting from
-tree `t`, and return the final tree and every answer in order. -/
-def Impl.runFrom (t : Tree) : List (Cmd ByteArray) → Tree × List (Response ByteArray)
+/-- English: Run commands one after another with step function `st` on the index, starting
+from tree `t`, and return the final tree and every answer in order. The theorems below apply it
+to the implementation hole `Impl.step`. Spec definitions never call a hole themselves; only
+theorems name holes. -/
+def runTree (st : Tree → Cmd ByteArray → Tree × Response ByteArray) (t : Tree) :
+    List (Cmd ByteArray) → Tree × List (Response ByteArray)
   | [] => (t, [])
   | c :: cs =>
-    let (t', r) := Impl.step t c
-    let (t'', rs) := Impl.runFrom t' cs
+    let (t', r) := st t c
+    let (t'', rs) := runTree st t' cs
     (t'', r :: rs)
-
-/-- English: The implementation's answers to a sequence of commands, starting from the empty
-tree. -/
-def Impl.run (cmds : List (Cmd ByteArray)) : List (Response ByteArray) :=
-  (Impl.runFrom .leaf cmds).2
 
 /-- English: End-to-end correctness (R4–R9). For every sequence of commands, the
 implementation's answers, read as spec bytes, are exactly the reference model's answers to the
 same commands. -/
 theorem impl_run_eq (cmds : List (Cmd ByteArray)) :
-    (Impl.run cmds).map (Response.map toBytes) = run (cmds.map (Cmd.map toBytes)) := sorry
+    (runTree Impl.step .leaf cmds).2.map (Response.map toBytes) = run (cmds.map (Cmd.map toBytes)) :=
+    sorry
 
 /-- English: Abstraction (R3, R9). After any sequence of commands, the tree read left to right
 is exactly the reference store. So the tree really holds the data, in ascending key order. -/
 theorem impl_toList_eq (cmds : List (Cmd ByteArray)) :
-    (Impl.runFrom .leaf cmds).1.toList = (runFrom Store.empty (cmds.map (Cmd.map toBytes))).1 :=
+    (runTree Impl.step .leaf cmds).1.toList = (runFrom Store.empty (cmds.map (Cmd.map toBytes))).1 :=
   sorry
 
 /-- English: Balance (R17). After any sequence of commands, the tree's height is at most
 3·⌊log₂(n+1)⌋ + 2, where n is the number of keys. This covers AVL, red-black and
 weight-balanced trees. -/
 theorem impl_height_le (cmds : List (Cmd ByteArray)) :
-    (Impl.runFrom .leaf cmds).1.height ≤
-      3 * Nat.log2 ((Impl.runFrom .leaf cmds).1.size + 1) + 2 := sorry
+    (runTree Impl.step .leaf cmds).1.height ≤
+      3 * Nat.log2 ((runTree Impl.step .leaf cmds).1.size + 1) + 2 := sorry
 
 end LeanKV.Spec

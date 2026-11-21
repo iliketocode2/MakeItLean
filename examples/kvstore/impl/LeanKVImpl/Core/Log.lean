@@ -1,5 +1,5 @@
 import LeanKVImpl.Core.Index
-import LeanKV.Spec.Log
+import LeanKVSol.Base.Log
 
 /-!
 # LeanKV core: log codec and recovery on `ByteArray` (Stage 3)
