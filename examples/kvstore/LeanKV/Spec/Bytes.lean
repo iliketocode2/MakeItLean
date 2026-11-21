@@ -46,4 +46,7 @@ between implementation bytes (fast arrays) and spec bytes (lists, easy to prove 
 about). -/
 def toBytes (b : ByteArray) : Bytes := b.toList
 
+/-- English: Turn the spec's byte list into a `ByteArray`. The inverse of `toBytes`. -/
+def ofBytes (l : Bytes) : ByteArray := ⟨l.toArray⟩
+
 end LeanKV.Spec

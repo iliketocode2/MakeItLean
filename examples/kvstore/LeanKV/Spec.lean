@@ -4,6 +4,7 @@ import LeanKV.Spec.Properties
 import LeanKV.Spec.Contract
 import LeanKV.Spec.Wire
 import LeanKV.Spec.Log
+import LeanKV.Spec.Store
 import LeanKV.Tools.EnglishDocs
 
 /-! Stage 1 gate: every spec declaration must carry an `English:` doc. -/

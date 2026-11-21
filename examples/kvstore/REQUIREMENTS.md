@@ -130,7 +130,8 @@ LeanKV is a single-process, persistent, ordered key-value store.
 |---|---|
 | R2–R9 | **Proven.** The fast index (a balanced tree) answers exactly like the sorted-list reference, for every sequence of operations. |
 | R8 atomicity, R11/R12 (log format, replay, torn-tail vs. corruption classification) | **Proven** over a model of the log as a byte sequence. Examples: encoding valid records and appending any strict prefix of one more record recovers exactly those records; garbage before a valid record is reported as corrupt at the right offset. |
-| R10/R11 (real files, fsync, OS) | **Tested** with the R23 harness, crash injection and differential tests against the model. **Trusted:** the filesystem, the OS and Lean's runtime. |
+| R10/R11/R12 store logic (ack only after fsync, truncate a torn tail, block after an I/O error, refuse a corrupt log) | **Proven** against a model file system with crashes and injected I/O faults (`Spec/Store.lean`). The store is written once, generic over its file operations, and the proven code is the code that runs. *(Added 2026-11-21 with the user's approval.)* |
+| R10/R11 (real files, fsync, OS) | **Tested** with the R23 harness, crash injection and differential tests against the model. This includes crash garbage the model leaves out (bytes that are not a prefix of anything written). **Trusted:** the filesystem, the OS and Lean's runtime. |
 | R12 (checksums) | The checksum function is **proven** to match its spec. Detection is **proven** relative to the checksum. Collisions are an accepted risk. |
 | R14/R15/R22 parsing and printing | Round-trip **proven**. Fuzzed. |
 | R17 | Height bound **proven**. Wall-clock time benchmarked. |

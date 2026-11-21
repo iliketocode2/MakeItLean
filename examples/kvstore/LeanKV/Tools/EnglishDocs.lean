@@ -23,11 +23,17 @@ def underInstance (env : Environment) : Name → Bool
   | .anonymous => false
   | n@(.str p _) | n@(.num p _) => isInstanceCore env n || underInstance env p
 
+/-- Is `n` the auto-generated constructor (`.mk`) of a structure? -/
+def isStructureCtor (env : Environment) (n : Name) : Bool :=
+  match env.find? n with
+  | some (.ctorInfo ci) => isStructure env ci.induct
+  | _ => false
+
 /-- Is `n` a declaration a human should see documented? -/
 def isUserFacing (env : Environment) (n : Name) : Bool :=
   !n.isInternalDetail &&
   !isAuxRecursor env n && !isNoConfusion env n && !isRecCore env n &&
-  !underInstance env n &&
+  !underInstance env n && !isStructureCtor env n &&
   !Meta.isMatcherCore env n &&
   !(`injEq).isSuffixOf n && !(`inj).isSuffixOf n &&
   !(`sizeOf_spec).isSuffixOf n && !(`ctorIdx).isSuffixOf n
