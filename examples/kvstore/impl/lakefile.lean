@@ -10,3 +10,8 @@ require leankv from ".."
 @[default_target]
 lean_lib LeanKVCore where
   roots := #[`LeanKVImpl.Core]
+
+/-- Stage 4 proofs that the core meets the frozen spec's obligations. -/
+@[default_target]
+lean_lib LeanKVProofs where
+  roots := #[`LeanKVImpl.Proofs]

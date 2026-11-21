@@ -6,9 +6,8 @@ import LeanKV.Spec.Log
 
 Each function mirrors the spec function of the same role in `Spec/Log.lean`, one step at a
 time, but works on a `ByteArray` at an offset instead of on lists. That keeps Stage 4's proofs a
-step-by-step correspondence. Two proof-licensed shortcuts:
-- CRC-32C uses a 256-entry table instead of the bitwise reference;
-- the corruption scan only tries offsets holding the magic's first byte 0xC7.
+step-by-step correspondence. One proof-licensed shortcut: the corruption scan only tries offsets holding the magic's first
+byte 0xC7.
 
 Intended fillings: `Impl.encodeRecord := encodeRecord`, `Impl.recover := recover`.
 -/
@@ -16,48 +15,20 @@ Intended fillings: `Impl.encodeRecord := encodeRecord`, `Impl.recover := recover
 namespace LeanKV.Core
 open LeanKV.Spec
 
-/-! ## CRC-32C -/
+/-! ## CRC-32C and encoding
 
-/-- The CRC-32C table: entry i is the spec's bitwise step applied to byte i from a zero CRC. -/
-def crcTable : Array UInt32 :=
-  (List.range 256).toArray.map fun i =>
-    (List.range 8).foldl (fun c _ => if c &&& 1 == 1 then (c >>> 1) ^^^ 0x82F63B78 else c >>> 1)
-      i.toUInt32
+v1 uses the spec's bitwise CRC-32C and the spec's encoder directly, so their correctness
+obligations are immediate. A table-driven CRC and a direct `ByteArray` encoder are Stage 7
+optimizations, each needing a proof (`bv_decide` is not usable: it relies on the
+`Lean.ofReduceBool` axiom, which the comparator's axiom whitelist rejects).
+-/
 
-/-- One table-driven CRC-32C step. Equal to the spec's `crc32cByte` (a Stage 4 obligation). -/
-def crcStep (crc : UInt32) (b : UInt8) : UInt32 :=
-  (crc >>> 8) ^^^ crcTable[((crc ^^^ b.toUInt32) &&& 0xFF).toNat]!
+/-- CRC-32C of a byte array (the spec's bitwise definition). -/
+def crc32cBA (b : ByteArray) : UInt32 := crc32c (toBytes b)
 
-/-- CRC-32C of a byte array. -/
-def crc32cBA (b : ByteArray) : UInt32 :=
-  (b.foldl crcStep 0xFFFFFFFF) ^^^ 0xFFFFFFFF
-
-/-! ## Encoding -/
-
-/-- Append a 4-byte little-endian number. -/
-def pushU32 (out : ByteArray) (n : Nat) : ByteArray :=
-  out |>.push (n % 256).toUInt8 |>.push (n / 256 % 256).toUInt8
-    |>.push (n / 65536 % 256).toUInt8 |>.push (n / 16777216 % 256).toUInt8
-
-/-- Append one stored write (tag, lengths, bytes). -/
-def pushOp (out : ByteArray) : WriteOp ByteArray → ByteArray
-  | .put k v => pushU32 (pushU32 (out.push 0x01) k.size ++ k) v.size ++ v
-  | .delete k => pushU32 (out.push 0x02) k.size ++ k
-
-/-- A batch's payload: the count, then each write. -/
-def encodePayload (ops : List (WriteOp ByteArray)) : ByteArray :=
-  ops.foldl pushOp (pushU32 ByteArray.empty ops.length)
-
-/-- Append `src`, writing 0xC7 as C7 00. -/
-def pushStuffed (out src : ByteArray) : ByteArray :=
-  src.foldl (fun o b => if b == 0xC7 then (o.push 0xC7).push 0x00 else o.push b) out
-
-/-- One record: magic, then the stuffed (length, payload, CRC). Intended `Impl.encodeRecord`. -/
+/-- One record, in exactly the spec's format. Intended `Impl.encodeRecord`. -/
 def encodeRecord (ops : List (WriteOp ByteArray)) : ByteArray :=
-  let p := encodePayload ops
-  let lenAndP := pushU32 ByteArray.empty p.size ++ p
-  let body := pushU32 lenAndP (crc32cBA lenAndP).toNat
-  pushStuffed (ByteArray.mk #[0xC7, 0x4B, 0x56, 0x31]) body
+  ofBytes (Spec.encodeRecord (ops.map (WriteOp.map toBytes)))
 
 /-! ## Decoding (mirrors `decodeRecord`) -/
 

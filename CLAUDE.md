@@ -3,7 +3,7 @@
 A framework that lets AI coding agents build applications **spec-first in Lean 4**. The code that runs is either proven against a frozen, human-approved spec, or differentially tested against a Lean reference model. Performance comes from **proof-licensed optimization**: fast paths that are proven equal to simple reference semantics.
 
 - Plan and decisions: `docs/PLAN.md`. Research and sources: `docs/RESEARCH.md`. Read both before making design changes.
-- Current status: Phase 1 (KV-store pilot). The spec is frozen (`examples/kvstore/spec.lock`, signed off 2026-11-21; check with `tools/check_lock.sh`; never edit locked files). Stage 3 (implementation) is done in the separate package `examples/kvstore/impl/` (module root `LeanKVImpl`; differential tests in `impl/test.sh`). Next is Stage 4: prove the 9 obligations for the core. Log friction in `examples/kvstore/FRICTION.md`.
+- Current status: Phase 1 (KV-store pilot). The spec is frozen (`examples/kvstore/spec.lock`, signed off 2026-11-21; check with `tools/check_lock.sh`; never edit locked files). Stage 3 is done in `examples/kvstore/impl/` (module root `LeanKVImpl`; tests in `impl/test.sh`). Stage 4 is in progress in `impl/LeanKVImpl/Proofs/`: proven for the core are `impl_run_eq`, `impl_toList_eq`, `impl_height_le` and `impl_encodeRecord_eq`; still to prove are `impl_recover_eq` and the 4 store theorems. Log friction in `examples/kvstore/FRICTION.md`.
 
 ## Environment
 - Work happens in WSL Ubuntu-24.04 at `~/MakeItLean`. Native Windows Lean is blocked by Smart App Control.
