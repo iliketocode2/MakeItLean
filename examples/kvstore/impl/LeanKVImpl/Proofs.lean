@@ -5,3 +5,4 @@ import LeanKVImpl.Proofs.Scan
 import LeanKVImpl.Proofs.Step
 import LeanKVImpl.Proofs.Balance
 import LeanKVImpl.Proofs.Encode
+import LeanKVImpl.Proofs.Recover
