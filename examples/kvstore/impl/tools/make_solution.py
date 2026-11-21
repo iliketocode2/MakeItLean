@@ -31,6 +31,10 @@ BODIES = {
     "impl_height_le": "by rw [LeanKV.Proofs.runTree_eq]; exact LeanKV.Proofs.core_height_le cmds",
     "impl_encodeRecord_eq": "LeanKV.Proofs.core_encodeRecord_eq ops",
     "impl_recover_eq": "LeanKV.Proofs.core_recover_eq b",
+    "storeCheck_spec": "LeanKV.Proofs.coreCheck_spec st",
+    "store_refuses_corrupt": "LeanKV.Proofs.core_refuses_corrupt hc cmds φ",
+    "store_no_faults": "LeanKV.Proofs.core_no_faults hs0 cmds",
+    "store_crash_consistent": "LeanKV.Proofs.core_crash_consistent hs0 cmds φ ch",
 }
 # Extra solution-only lemmas, emitted right after the named declaration.
 HELPERS: dict = {}

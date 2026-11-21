@@ -1,6 +1,0 @@
-{"challenge_module": "LeanKV.Spec", "solution_module": "LeanKVSol.Holes",
- "theorem_names": ["LeanKV.Spec.impl_run_eq", "LeanKV.Spec.impl_toList_eq", "LeanKV.Spec.impl_height_le",
-   "LeanKV.Spec.impl_encodeRecord_eq", "LeanKV.Spec.impl_recover_eq"],
- "definition_names": ["LeanKV.Spec.Impl.step", "LeanKV.Spec.Impl.encodeRecord", "LeanKV.Spec.Impl.recover",
-   "LeanKV.Spec.Impl.openStore", "LeanKV.Spec.Impl.exec"],
- "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]}

@@ -66,7 +66,7 @@ theorem store_no_faults {c0 : Bytes} {s0 : Store} (hs0 : logState c0 = some s0)
     ∃ h rs, ((sessionWith (m := FsM) Impl.openStore Impl.exec cmds).run (startState c0 [])).1 = .ok (h, rs) ∧
       repliesMatch rs (runFrom s0 (cmds.map (Cmd.map toBytes))).2 = true ∧
       h.index.toList = (runFrom s0 (cmds.map (Cmd.map toBytes))).1 ∧
-      h.index.height ≤ 3 * Nat.log2 (h.index.size + 1) + 2 := sorry
+      h.index.height ≤ 3 * Nat.log2 (h.index.size + 1) + 2 := LeanKV.Proofs.core_no_faults hs0 cmds
 
 /-- English: Crash consistency (R10, R11). Run a session on a healthy log with any I/O faults,
 then crash in any allowed way.
@@ -87,7 +87,7 @@ theorem store_crash_consistent {c0 : Bytes} {s0 : Store} (hs0 : logState c0 = so
         repliesMatch (rs.take j) ((runFrom s0 scmds).2.take j) = true ∧
         (∀ r ∈ rs.drop j, r.isIOError = true) ∧
         (logState c1 = some (runFrom s0 (scmds.take j)).1 ∨
-          (j < cmds.length ∧ logState c1 = some (runFrom s0 (scmds.take (j + 1))).1)) := sorry
+          (j < cmds.length ∧ logState c1 = some (runFrom s0 (scmds.take (j + 1))).1)) := LeanKV.Proofs.core_crash_consistent hs0 cmds φ ch
 
 /-- English: Refusing a corrupt log (R12). If the log is corrupt at offset p, the session fails
 with `ERR CORRUPT p` (or with an I/O error, if reading fails), and the log is left exactly as it
@@ -96,7 +96,7 @@ theorem store_refuses_corrupt {c0 : Bytes} {p : Nat} (hc : recover c0 = .corrupt
     (cmds : List (Cmd ByteArray)) (φ : List Fault) :
     let out := (sessionWith (m := FsM) Impl.openStore Impl.exec cmds).run (startState c0 φ)
     (out.1 = .error (.corrupt p) ∨ ∃ d, out.1 = .error (.ioError d)) ∧
-      out.2.disk = ⟨c0, c0⟩ := sorry
+      out.2.disk = ⟨c0, c0⟩ := LeanKV.Proofs.core_refuses_corrupt hc cmds φ
 
 /-- English: `check` never modifies the log (R21), and it reports the reference recovery
 outcome. -/
@@ -106,6 +106,6 @@ theorem storeCheck_spec (st : FsState) :
         ((checkWith (m := FsM) Impl.recover).run st).1.map toBytes =
           match recover st.disk.content with
           | .ok bs n t => .log bs.length n t
-          | .corrupt p => .corrupt p) := sorry
+          | .corrupt p => .corrupt p) := LeanKV.Proofs.coreCheck_spec st
 
 end LeanKV.Spec

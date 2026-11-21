@@ -6,3 +6,6 @@ import LeanKVImpl.Proofs.Step
 import LeanKVImpl.Proofs.Balance
 import LeanKVImpl.Proofs.Encode
 import LeanKVImpl.Proofs.Recover
+import LeanKVImpl.Proofs.FsOps
+import LeanKVImpl.Proofs.Canon
+import LeanKVImpl.Proofs.Session
