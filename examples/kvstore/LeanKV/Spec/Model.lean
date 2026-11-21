@@ -11,50 +11,78 @@ machine. They belong to the parser (R22) and the storage layer (R11/R12).
 
 namespace LeanKV.Spec
 
-/-- English: One write inside a batch (R8): a put or a delete. -/
-inductive WriteOp where
+/-- English: One write inside a batch (R8): a put or a delete. Generic in the byte-string
+type `β`: the spec uses `Bytes` (lists, easy to prove things about), and an implementation
+may use `ByteArray` (fast). The contract relates the two with `map ByteArray.toList`. -/
+inductive WriteOp (β : Type) where
   /-- English: Set key `k` to value `v`. -/
-  | put (k v : Bytes)
+  | put (k v : β)
   /-- English: Remove key `k`, if it is present. -/
-  | delete (k : Bytes)
+  | delete (k : β)
   deriving Repr, DecidableEq
+
+/-- English: Change the byte-string representation inside a write, keeping its meaning. -/
+def WriteOp.map {β γ : Type} (f : β → γ) : WriteOp β → WriteOp γ
+  | .put k v => .put (f k) (f v)
+  | .delete k => .delete (f k)
 
 /-- English: The upper end of a scan range (R7): a key, which is excluded from the range,
 or "unbounded". -/
-inductive Upper where
+inductive Upper (β : Type) where
   /-- English: The range stops just before key `hi`. -/
-  | below (hi : Bytes)
+  | below (hi : β)
   /-- English: The range runs to the last key. -/
   | unbounded
   deriving Repr, DecidableEq
 
+/-- English: Change the byte-string representation inside a scan's upper end. -/
+def Upper.map {β γ : Type} (f : β → γ) : Upper β → Upper γ
+  | .below hi => .below (f hi)
+  | .unbounded => .unbounded
+
 /-- English: A command the state machine accepts (R4–R8). -/
-inductive Cmd where
+inductive Cmd (β : Type) where
   /-- English: `get k` (R4). -/
-  | get (k : Bytes)
+  | get (k : β)
   /-- English: `put k v` (R5). -/
-  | put (k v : Bytes)
+  | put (k v : β)
   /-- English: `delete k` (R6). -/
-  | delete (k : Bytes)
+  | delete (k : β)
   /-- English: `scan lo hi limit` (R7). -/
-  | scan (lo : Bytes) (hi : Upper) (limit : Nat)
+  | scan (lo : β) (hi : Upper β) (limit : Nat)
   /-- English: `batch [ops]` (R8). -/
-  | batch (ops : List WriteOp)
+  | batch (ops : List (WriteOp β))
   deriving Repr, DecidableEq
 
+/-- English: Change the byte-string representation inside a command, keeping its meaning. -/
+def Cmd.map {β γ : Type} (f : β → γ) : Cmd β → Cmd γ
+  | .get k => .get (f k)
+  | .put k v => .put (f k) (f v)
+  | .delete k => .delete (f k)
+  | .scan lo hi limit => .scan (f lo) (hi.map f) limit
+  | .batch ops => .batch (ops.map (WriteOp.map f))
+
 /-- English: The state machine's answer to a command. -/
-inductive Response where
+inductive Response (β : Type) where
   /-- English: The write succeeded. -/
   | ok
   /-- English: `get` found this value. -/
-  | value (v : Bytes)
+  | value (v : β)
   /-- English: `get` found nothing. -/
   | notFound
   /-- English: `scan` returned these pairs, in ascending key order. -/
-  | pairs (kvs : List (Bytes × Bytes))
+  | pairs (kvs : List (β × β))
   /-- English: The command broke a size limit (R1, R7a, R8a). Nothing changed. -/
   | limitError
   deriving Repr, DecidableEq
+
+/-- English: Change the byte-string representation inside an answer, keeping its meaning. -/
+def Response.map {β γ : Type} (f : β → γ) : Response β → Response γ
+  | .ok => .ok
+  | .value v => .value (f v)
+  | .notFound => .notFound
+  | .pairs kvs => .pairs (kvs.map (fun p => (f p.1, f p.2)))
+  | .limitError => .limitError
 
 /-- English: The reference state (R9): a list of (key, value) pairs. In every reachable
 state the keys are strictly ascending, so each key appears at most once (R3); this is
@@ -85,14 +113,14 @@ def Store.erase (s : Store) (k : Bytes) : Store :=
   s.filter (fun p => p.1 != k)
 
 /-- English: Whether key `k` is below the upper end `hi` of a scan range. -/
-def Upper.admits : Upper → Bytes → Bool
+def Upper.admits : Upper Bytes → Bytes → Bool
   | .below hi, k => bytesLt k hi
   | .unbounded, _ => true
 
 /-- English: The pairs whose key is at least `lo` and below `hi`, in the store's
 (ascending) order, keeping at most the first `limit` of them (R7). If `lo ≥ hi` or
 `limit = 0`, the result is empty (R7a). -/
-def Store.scan (s : Store) (lo : Bytes) (hi : Upper) (limit : Nat) : List (Bytes × Bytes) :=
+def Store.scan (s : Store) (lo : Bytes) (hi : Upper Bytes) (limit : Nat) : List (Bytes × Bytes) :=
   (s.filter (fun p => !bytesLt p.1 lo && hi.admits p.1)).take limit
 
 /-- English: A scan's lower bound is valid when it is at most 1024 bytes. It may be empty,
@@ -100,42 +128,42 @@ which means "from the first key" (R7a). -/
 def validLower (lo : Bytes) : Bool := lo.length ≤ maxKeyLen
 
 /-- English: A scan's upper bound is valid when it is "unbounded" or a valid key (R7a). -/
-def Upper.valid : Upper → Bool
+def Upper.valid : Upper Bytes → Bool
   | .below hi => validKey hi
   | .unbounded => true
 
 /-- English: A write inside a batch is valid when its key, and its value if it has one,
 are within the R1 limits. -/
-def WriteOp.valid : WriteOp → Bool
+def WriteOp.valid : WriteOp Bytes → Bool
   | .put k v => validKey k && validValue v
   | .delete k => validKey k
 
 /-- English: How many raw bytes a write counts against the batch size limit: key bytes
 plus value bytes (R8a). -/
-def WriteOp.size : WriteOp → Nat
+def WriteOp.size : WriteOp Bytes → Nat
   | .put k v => k.length + v.length
   | .delete k => k.length
 
 /-- English: A batch is valid when it has at most 10,000 ops, every op is valid, and the
 ops total at most 64 MiB (R8a). The empty batch is valid. -/
-def validBatch (ops : List WriteOp) : Bool :=
+def validBatch (ops : List (WriteOp Bytes)) : Bool :=
   ops.length ≤ maxBatchOps && ops.all WriteOp.valid &&
     (ops.map WriteOp.size).sum ≤ maxBatchBytes
 
 /-- English: The effect of one write on the store. -/
-def WriteOp.apply (s : Store) : WriteOp → Store
+def WriteOp.apply (s : Store) : WriteOp Bytes → Store
   | .put k v => s.insert k v
   | .delete k => s.erase k
 
 /-- English: Run a batch atomically (R8). If the batch is valid, apply its writes in order
 and answer `ok`. Otherwise change nothing and answer `limitError`. -/
-def runBatch (s : Store) (ops : List WriteOp) : Store × Response :=
+def runBatch (s : Store) (ops : List (WriteOp Bytes)) : Store × Response Bytes :=
   if validBatch ops then (ops.foldl WriteOp.apply s, .ok) else (s, .limitError)
 
 /-- English: The reference meaning of one command (R4–R8): the new state and the answer.
 `put` and `delete` are exactly one-op batches. A command that breaks a limit changes
 nothing and answers `limitError`. -/
-def step (s : Store) : Cmd → Store × Response
+def step (s : Store) : Cmd Bytes → Store × Response Bytes
   | .get k =>
     if validKey k then
       (s, match s.lookup k with
@@ -151,7 +179,7 @@ def step (s : Store) : Cmd → Store × Response
 
 /-- English: Run commands one after another from state `s`, returning the final state and
 every answer in order. -/
-def runFrom (s : Store) : List Cmd → Store × List Response
+def runFrom (s : Store) : List (Cmd Bytes) → Store × List (Response Bytes)
   | [] => (s, [])
   | c :: cs =>
     let (s', r) := step s c
@@ -160,6 +188,6 @@ def runFrom (s : Store) : List Cmd → Store × List Response
 
 /-- English: Determinism (R9): the answers to a sequence of commands on a fresh store. They
 depend only on the commands, since `run` is a function of them alone. -/
-def run (cmds : List Cmd) : List Response := (runFrom Store.empty cmds).2
+def run (cmds : List (Cmd Bytes)) : List (Response Bytes) := (runFrom Store.empty cmds).2
 
 end LeanKV.Spec

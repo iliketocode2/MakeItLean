@@ -41,4 +41,9 @@ def bytesLt : Bytes → Bytes → Bool
   | _ :: _, [] => false
   | a :: as, b :: bs => a < b || (a == b && bytesLt as bs)
 
+/-- English: Read a `ByteArray` as the spec's byte list. This is the abstraction function
+between implementation bytes (fast arrays) and spec bytes (lists, easy to prove things
+about). -/
+def toBytes (b : ByteArray) : Bytes := b.toList
+
 end LeanKV.Spec

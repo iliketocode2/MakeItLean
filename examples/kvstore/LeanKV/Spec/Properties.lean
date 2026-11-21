@@ -33,11 +33,11 @@ def Store.WellFormed (s : Store) : Prop :=
     ∀ p ∈ s, validKey p.1 = true ∧ validValue p.2 = true
 
 /-- English: Every command takes a well-formed store to a well-formed store. -/
-theorem step_wellFormed {s : Store} (hs : s.WellFormed) (c : Cmd) : (step s c).1.WellFormed :=
+theorem step_wellFormed {s : Store} (hs : s.WellFormed) (c : Cmd Bytes) : (step s c).1.WellFormed :=
   sorry
 
 /-- English: Every state reachable from the empty store is well-formed. -/
-theorem runFrom_empty_wellFormed (cmds : List Cmd) :
+theorem runFrom_empty_wellFormed (cmds : List (Cmd Bytes)) :
     (runFrom Store.empty cmds).1.WellFormed := sorry
 
 /-- English: In a well-formed store each key appears at most once (R3). -/
@@ -47,7 +47,7 @@ theorem wellFormed_keys_nodup {s : Store} (hs : s.WellFormed) : (s.map Prod.fst)
 /-! ## R1: limits -/
 
 /-- English: A command that answers `limitError` changes nothing (R1, R7a, R8a). -/
-theorem limitError_unchanged (s : Store) (c : Cmd) (h : (step s c).2 = .limitError) :
+theorem limitError_unchanged (s : Store) (c : Cmd Bytes) (h : (step s c).2 = .limitError) :
     (step s c).1 = s := sorry
 
 /-- English: `get`, `put` and `delete` with an invalid key answer `limitError` (R1). -/
@@ -94,36 +94,36 @@ theorem delete_missing {s : Store} {k : Bytes} (h : s.lookup k = none) :
 
 /-- English: A scan with valid bounds succeeds and changes nothing, even when the result is
 empty (R7a). -/
-theorem scan_ok (s : Store) {lo : Bytes} {hi : Upper} (limit : Nat)
+theorem scan_ok (s : Store) {lo : Bytes} {hi : Upper Bytes} (limit : Nat)
     (hlo : validLower lo = true) (hhi : hi.valid = true) :
     step s (.scan lo hi limit) = (s, .pairs (s.scan lo hi limit)) := sorry
 
 /-- English: A scan returns at most `limit` pairs (R7). -/
-theorem scan_length_le (s : Store) (lo : Bytes) (hi : Upper) (limit : Nat) :
+theorem scan_length_le (s : Store) (lo : Bytes) (hi : Upper Bytes) (limit : Nat) :
     (s.scan lo hi limit).length ≤ limit := sorry
 
 /-- English: On a well-formed store, a scan's result is in strictly ascending key order
 (R7). -/
-theorem scan_sorted {s : Store} (hs : s.WellFormed) (lo : Bytes) (hi : Upper) (limit : Nat) :
+theorem scan_sorted {s : Store} (hs : s.WellFormed) (lo : Bytes) (hi : Upper Bytes) (limit : Nat) :
     (s.scan lo hi limit).Pairwise (fun a b => bytesLt a.1 b.1 = true) := sorry
 
 /-- English: Every pair a scan returns is in the store, with key ≥ `lo` and below `hi`
 (R7). -/
-theorem scan_sound {s : Store} (hs : s.WellFormed) (lo : Bytes) (hi : Upper) (limit : Nat)
+theorem scan_sound {s : Store} (hs : s.WellFormed) (lo : Bytes) (hi : Upper Bytes) (limit : Nat)
     {p : Bytes × Bytes} (hp : p ∈ s.scan lo hi limit) :
     bytesLt p.1 lo = false ∧ hi.admits p.1 = true ∧ s.lookup p.1 = some p.2 := sorry
 
 /-- English: A scan leaves out an in-range pair only when the limit was reached and that pair's
 key is larger than every key returned. So the scan returns the *first* `limit` pairs in
 range (R7). -/
-theorem scan_complete {s : Store} (hs : s.WellFormed) (lo : Bytes) (hi : Upper)
+theorem scan_complete {s : Store} (hs : s.WellFormed) (lo : Bytes) (hi : Upper Bytes)
     (limit : Nat) {k v : Bytes} (hkv : s.lookup k = some v) (hlo : bytesLt k lo = false)
     (hhi : hi.admits k = true) (hout : (k, v) ∉ s.scan lo hi limit) :
     (s.scan lo hi limit).length = limit ∧
       ∀ p ∈ s.scan lo hi limit, bytesLt p.1 k = true := sorry
 
 /-- English: A scan with `limit = 0` returns nothing (R7a). -/
-theorem scan_limit_zero (s : Store) (lo : Bytes) (hi : Upper) : s.scan lo hi 0 = [] := sorry
+theorem scan_limit_zero (s : Store) (lo : Bytes) (hi : Upper Bytes) : s.scan lo hi 0 = [] := sorry
 
 /-- English: A scan with `lo ≥ hi` returns nothing (R7a). -/
 theorem scan_empty_range (s : Store) {lo hi : Bytes} (h : bytesLt lo hi = false)
@@ -132,20 +132,20 @@ theorem scan_empty_range (s : Store) {lo hi : Bytes} (h : bytesLt lo hi = false)
 /-! ## R8: batch -/
 
 /-- English: The single-command form of a write: `put k v` or `delete k`. -/
-def WriteOp.toCmd : WriteOp → Cmd
+def WriteOp.toCmd {β : Type} : WriteOp β → Cmd β
   | .put k v => .put k v
   | .delete k => .delete k
 
 /-- English: An invalid batch changes nothing and answers `limitError`. No write in it takes
 effect (R8 atomicity, R8a). -/
-theorem batch_invalid (s : Store) {ops : List WriteOp} (h : validBatch ops = false) :
+theorem batch_invalid (s : Store) {ops : List (WriteOp Bytes)} (h : validBatch ops = false) :
     step s (.batch ops) = (s, .limitError) := sorry
 
 /-- English: A valid batch has exactly the effect of running its writes one at a time, in
 order, and each of those writes succeeds (R8). This is also the licence for group commit
 (R18). -/
-theorem batch_serial (s : Store) {ops : List WriteOp} (h : validBatch ops = true) :
+theorem batch_serial (s : Store) {ops : List (WriteOp Bytes)} (h : validBatch ops = true) :
     step s (.batch ops) = ((runFrom s (ops.map WriteOp.toCmd)).1, .ok) ∧
-      (runFrom s (ops.map WriteOp.toCmd)).2 = ops.map (fun _ => Response.ok) := sorry
+      (runFrom s (ops.map WriteOp.toCmd)).2 = ops.map (fun _ => (Response.ok : Response Bytes)) := sorry
 
 end LeanKV.Spec
