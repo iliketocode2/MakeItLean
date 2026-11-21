@@ -57,7 +57,7 @@ def rec0 := encodeRecord [.put (toBytes (a "z")) (toBytes (a "9"))]
 def torn := rec0 ++ (encodeRecord [.put (toBytes (a "y")) (toBytes (a "8"))]).take 7
 def corrupt := rec0 ++ toBytes (a "junk") ++ rec0
 
-#eval
+def results :=
   let starts : List Bytes := [[], torn]
   let crash := starts.flatMap fun c0 => (scripts 5).map fun φ => crashOk c0 ((logState c0).getD []) cmds φ
   let nf := starts.all fun c0 => noFaultsOk c0 ((logState c0).getD []) cmds
@@ -74,3 +74,7 @@ def corrupt := rec0 ++ toBytes (a "junk") ++ rec0
       ok := ok && logState disk == some s
     return ok
   (crash.filter id |>.length, crash.filter (! ·) |>.length, nf, cor, multi)
+
+#eval results
+-- Gate: all crash scenarios pass and every other check holds.
+#guard results.2.1 == 0 && results.2.2.1 && results.2.2.2.1 && results.2.2.2.2

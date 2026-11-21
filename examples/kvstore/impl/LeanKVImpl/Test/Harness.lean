@@ -178,3 +178,8 @@ def report (im : Impl) : String × Nat × Nat :=
   report (mutant .noTruncate "MUTANT no torn-tail truncate"),
   report (mutant .noPoison "MUTANT keeps going after I/O error"),
   report (mutant .openIgnoresCorruption "MUTANT opens a corrupt log")]
+
+-- Gate: the proven core passes every seed, and every planted bug is caught at least once.
+#guard (report core).2.2 == 0
+#guard [Bug.ackBeforeSync, .noTruncate, .noPoison, .openIgnoresCorruption].all
+  fun b => (report (mutant b "m")).2.2 > 0

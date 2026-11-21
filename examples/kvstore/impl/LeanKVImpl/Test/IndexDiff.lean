@@ -40,3 +40,6 @@ def check (cmds : List (Cmd ByteArray)) : Bool :=
   let results := (List.range 300).map fun s => check (genCmds s 200)
   (results.filter id |>.length, results.filter (! ·) |>.length,
    (runCore .leaf (genCmds 7 200)).1.size, (runCore .leaf (genCmds 7 200)).1.height)
+
+-- Gate: every sequence agrees with the contract conditions.
+#guard (List.range 300).all fun s => check (genCmds s 200)

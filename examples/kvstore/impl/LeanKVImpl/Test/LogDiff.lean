@@ -27,7 +27,7 @@ def recOk (b : ByteArray) : Bool := sameRec (LeanKV.Core.recover b) (recover (to
 
 def flipBit (b : ByteArray) (i bit : Nat) : ByteArray := b.set! i (b[i]! ^^^ (1 <<< bit).toUInt8)
 
-#eval
+def results :=
   -- 1. CRC table vs bitwise reference
   let crc := (List.range 200).all fun s => LeanKV.Core.crc32cBA (bytesOf s (s % 40)) == crc32c (toBytes (bytesOf s (s % 40)))
   -- 2. encoding identical to the spec, byte for byte
@@ -43,3 +43,7 @@ def flipBit (b : ByteArray) (i bit : Nat) : ByteArray := b.set! i (b[i]! ^^^ (1 
   let garb := (List.range 50).all fun s => recOk (r1 ++ bytesOf s (1 + s % 9) ++ r3)
   let rand := (List.range 300).all fun s => recOk (bytesOf (s + 1000) (s % 60))
   (crc, enc, log.size, trunc, flips, garb, rand)
+
+#eval results
+-- Gate: every check holds.
+#guard results.1 && results.2.1 && results.2.2.2.1 && results.2.2.2.2.1 && results.2.2.2.2.2.1 && results.2.2.2.2.2.2
