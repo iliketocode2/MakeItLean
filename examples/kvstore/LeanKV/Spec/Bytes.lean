@@ -1,0 +1,44 @@
+/-!
+# LeanKV spec: byte strings, limits and key order (R1, R2, R8a)
+
+Part of the Stage 1 spec. Every declaration carries an `English:` doc pairing it with
+the plain-English requirement it formalizes (see `examples/kvstore/REQUIREMENTS.md`).
+-/
+
+namespace LeanKV.Spec
+
+/-- English: A byte string, the type of keys, values and scan bounds (R1). It is a plain
+list of bytes, so that proofs about it use ordinary list induction. -/
+abbrev Bytes := List UInt8
+
+/-- English: The longest allowed key: 1024 bytes (R1). -/
+def maxKeyLen : Nat := 1024
+
+/-- English: The longest allowed value: 1 MiB, which is 1,048,576 bytes (R1). -/
+def maxValueLen : Nat := 1024 * 1024
+
+/-- English: The most operations allowed in one batch: 10,000 (R8a). -/
+def maxBatchOps : Nat := 10000
+
+/-- English: The most bytes allowed in one batch, 64 MiB, counted as raw key bytes plus
+raw value bytes before any escaping or log framing (R8a). -/
+def maxBatchBytes : Nat := 64 * 1024 * 1024
+
+/-- English: A key is valid when it is 1 to 1024 bytes long. In particular the empty key
+is not allowed (R1, R2). -/
+def validKey (k : Bytes) : Bool := 1 ≤ k.length && k.length ≤ maxKeyLen
+
+/-- English: A value is valid when it is at most 1 MiB long. The empty value is allowed
+(R1). -/
+def validValue (v : Bytes) : Bool := v.length ≤ maxValueLen
+
+/-- English: Bytewise lexicographic order on byte strings (R2), as in LevelDB/RocksDB.
+Compare the first byte where the strings differ, as an unsigned number. If one string is
+a proper prefix of the other, the shorter one is smaller. So "a" < "ab" < "b". -/
+def bytesLt : Bytes → Bytes → Bool
+  | [], [] => false
+  | [], _ :: _ => true
+  | _ :: _, [] => false
+  | a :: as, b :: bs => a < b || (a == b && bytesLt as bs)
+
+end LeanKV.Spec
