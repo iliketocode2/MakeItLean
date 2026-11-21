@@ -67,7 +67,10 @@ def decodeBytes (t : Bytes) : Option Bytes :=
 /-! ## Numbers and keywords -/
 
 /-- English: A natural number written in decimal, with no leading zeros. -/
-def printNat (n : Nat) : Bytes := (Nat.toDigits 10 n).map (fun c => c.toNat.toUInt8)
+def printNat (n : Nat) : Bytes :=
+  if n < 10 then [(0x30 + n).toUInt8] else printNat (n / 10) ++ [(0x30 + n % 10).toUInt8]
+termination_by n
+decreasing_by omega
 
 /-- English: Read a non-empty string of decimal digits as a number. -/
 def parseNat (t : Bytes) : Option Nat :=
@@ -365,29 +368,508 @@ def parseReplyTokens : List Bytes → Option (Reply Bytes)
 /-- English: Read a reply line. -/
 def parseReply (line : Bytes) : Option (Reply Bytes) := tokenize line >>= parseReplyTokens
 
-/-! ## Required properties (proven in Stage 2) -/
+/-! ## Required properties and their proofs (Stage 2) -/
+
+/-- English: Reading back a printed hex digit gives the original number, for every number from 0 to 15. -/
+theorem hexValue_hexDigit : ∀ n < 16, hexValue (hexDigit n) = some n := by decide
+
+/-- English: A plain byte at the front of a token is read back as itself. -/
+theorem unescape_plain {x : UInt8} (h : isPlain x = true) (r : Bytes) :
+    unescape (x :: r) = (x :: ·) <$> unescape r := by
+  have hx : x ≠ 0x5C := by intro e; subst e; simp [isPlain] at h
+  rw [unescape]
+  · split <;> simp_all
+  all_goals (intros; simp_all)
+
+/-- English: A byte is 16 times its high hex digit plus its low hex digit. -/
+theorem byte_split (x : UInt8) : (16 * (x.toNat / 16) + x.toNat % 16).toUInt8 = x := by
+  rw [Nat.div_add_mod]; simp
+
+/-- English: Reading back an escaped byte gives the original byte, whatever follows it. -/
+theorem unescape_escapeByte (x : UInt8) (r : Bytes) :
+    unescape (escapeByte x ++ r) = (x :: ·) <$> unescape r := by
+  unfold escapeByte
+  split
+  · exact unescape_plain (by assumption) r
+  · split
+    · rename_i h; simp at h; subst h; simp [unescape]
+    · split
+      · rename_i h; simp at h; subst h; simp [unescape]
+      · split
+        · rename_i h; simp at h; subst h; simp [unescape]
+        · have h1 := hexValue_hexDigit (x.toNat / 16) (by have := x.toNat_lt; omega)
+          have h2 := hexValue_hexDigit (x.toNat % 16) (Nat.mod_lt _ (by decide))
+          simp only [List.cons_append, List.nil_append]
+          rw [unescape]
+          · show (match hexValue (hexDigit (x.toNat / 16)), hexValue (hexDigit (x.toNat % 16)) with
+                | some hv, some lv => ((16 * hv + lv).toUInt8 :: ·) <$> unescape r
+                | _, _ => none) = _
+            rw [h1, h2]; simp only [byte_split]
+          all_goals simp
+
+/-- English: Every hex digit is a visible ASCII character. -/
+theorem hexDigit_visible : ∀ n < 16, 0x21 ≤ hexDigit n ∧ hexDigit n ≤ 0x7E := by decide
+
+/-- English: Every byte of an escaped byte is a visible ASCII character. -/
+theorem escapeByte_visible (x : UInt8) : ∀ y ∈ escapeByte x, 0x21 ≤ y ∧ y ≤ 0x7E := by
+  unfold escapeByte
+  split
+  · rename_i h; simp [isPlain] at h; simp; exact ⟨h.1.1.1, h.1.1.2⟩
+  · split
+    · simp
+    · split
+      · simp
+      · split
+        · simp
+        · have h1 := hexDigit_visible (x.toNat / 16) (by have := x.toNat_lt; omega)
+          have h2 := hexDigit_visible (x.toNat % 16) (Nat.mod_lt _ (by decide))
+          intro y hy; simp at hy
+          rcases hy with rfl | rfl | rfl | rfl
+          · decide
+          · decide
+          · exact h1
+          · exact h2
+
+/-- English: Reading back an escaped byte string gives the original bytes. -/
+theorem unescape_flatMap (bs : Bytes) : unescape (bs.flatMap escapeByte) = some bs := by
+  induction bs with
+  | nil => rfl
+  | cons x xs ih => rw [List.flatMap_cons, unescape_escapeByte, ih]; rfl
+
+/-- English: An escaped byte is never empty. -/
+theorem escapeByte_ne_nil (x : UInt8) : escapeByte x ≠ [] := by
+  unfold escapeByte; split <;> (try split) <;> (try split) <;> (try split) <;> simp
 
 /-- English: Decoding an encoded byte string gives back the same bytes (R22). -/
-theorem decodeBytes_encodeBytes (b : Bytes) : decodeBytes (encodeBytes b) = some b := sorry
+theorem decodeBytes_encodeBytes (b : Bytes) : decodeBytes (encodeBytes b) = some b := by
+  unfold encodeBytes
+  cases b with
+  | nil => rfl
+  | cons x xs =>
+    simp only [List.isEmpty_cons, Bool.false_eq_true, ↓reduceIte]
+    have hu := unescape_flatMap (x :: xs)
+    have hne : (x :: xs).flatMap escapeByte ≠ [] := by
+      rw [List.flatMap_cons]; intro h; exact escapeByte_ne_nil x (List.append_eq_nil_iff.mp h).1
+    have hq : ((x :: xs).flatMap escapeByte == [0x22, 0x22]) = false := by
+      apply beq_false_of_ne; intro h; rw [h] at hu; simp [unescape, isPlain] at hu
+    unfold decodeBytes
+    have he : ((x :: xs).flatMap escapeByte).isEmpty = false := by simpa using hne
+    rw [hq]; simp only [he, Bool.false_eq_true, ↓reduceIte]; exact hu
 
-/-- English: An encoded byte string is a non-empty token made only of visible ASCII
-characters, so it never contains a space or a newline (R22). -/
-theorem encodeBytes_visible (b : Bytes) :
-    encodeBytes b ≠ [] ∧ ∀ x ∈ encodeBytes b, 0x21 ≤ x ∧ x ≤ 0x7E := sorry
+/-- English: A token is visible when it is non-empty and every byte is a visible ASCII character (0x21–0x7E). In particular it has no space and no newline. -/
+def Vis (t : Bytes) : Prop := t ≠ [] ∧ ∀ y ∈ t, 0x21 ≤ y ∧ y ≤ 0x7E
+
+/-- English: An encoded byte string is a visible token. -/
+theorem encodeBytes_vis (b : Bytes) : Vis (encodeBytes b) := by
+  unfold encodeBytes
+  cases b with
+  | nil => exact ⟨by simp, by decide⟩
+  | cons x xs =>
+    simp only [List.isEmpty_cons, Bool.false_eq_true, ↓reduceIte]
+    refine ⟨?_, ?_⟩
+    · rw [List.flatMap_cons]; intro h; exact escapeByte_ne_nil x (List.append_eq_nil_iff.mp h).1
+    · intro y hy; rw [List.mem_flatMap] at hy; obtain ⟨z, _, hz⟩ := hy; exact escapeByte_visible z y hz
+
+/-- English: For a digit k, the byte 0x30+k is between `0` and `9` and reads back as k. -/
+theorem digit_ok : ∀ k < 10, ((0x30 + k).toUInt8 : UInt8) ≥ 0x30 ∧ ((0x30 + k).toUInt8 : UInt8) ≤ 0x39 ∧
+    ((0x30 + k).toUInt8 : UInt8).toNat - 0x30 = k := by decide
+
+/-- English: Reading digits left to right: appending digit k to digits that read as n gives 10·n + k. -/
+theorem parseNat_step (l : Bytes) (k : Nat) (hk : k < 10) (n : Nat)
+    (h : l.foldl (fun acc d => do
+      let a ← acc
+      if 0x30 ≤ d && d ≤ 0x39 then some (10 * a + (d.toNat - 0x30)) else none) (some 0) = some n) :
+    (l ++ [(0x30 + k).toUInt8]).foldl (fun acc d => do
+      let a ← acc
+      if 0x30 ≤ d && d ≤ 0x39 then some (10 * a + (d.toNat - 0x30)) else none) (some 0) =
+      some (10 * n + k) := by
+  obtain ⟨h1, h2, h3⟩ := digit_ok k hk
+  generalize ((0x30 + k).toUInt8 : UInt8) = d at h1 h2 h3 ⊢
+  rw [List.foldl_append, h]
+  have h1' : (48 : UInt8) ≤ d := h1
+  simp [h1', h2, h3]
+
+/-- English: A printed number is never empty. -/
+theorem printNat_ne_nil (n : Nat) : printNat n ≠ [] := by
+  unfold printNat; split <;> simp
+
+/-- English: Reading the digits of a printed number gives back the number. -/
+theorem printNat_fold (n : Nat) :
+    (printNat n).foldl (fun acc d => do
+      let a ← acc
+      if 0x30 ≤ d && d ≤ 0x39 then some (10 * a + (d.toNat - 0x30)) else none) (some 0) = some n := by
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    unfold printNat
+    split
+    · rename_i hn
+      have := parseNat_step [] n hn 0 rfl
+      simpa using this
+    · rename_i hn
+      have := parseNat_step _ (n % 10) (Nat.mod_lt _ (by decide)) (n / 10) (ih (n / 10) (by omega))
+      rw [this]; congr 1; omega
 
 /-- English: Reading a printed number gives back the same number. -/
-theorem parseNat_printNat (n : Nat) : parseNat (printNat n) = some n := sorry
+theorem parseNat_printNat (n : Nat) : parseNat (printNat n) = some n := by
+  unfold parseNat
+  have : (printNat n).isEmpty = false := by simpa using printNat_ne_nil n
+  simp only [this, Bool.false_eq_true, ↓reduceIte]
+  exact printNat_fold n
+
+/-- English: Every decimal digit is a visible ASCII character. -/
+theorem digit_vis : ∀ k < 10, 0x21 ≤ ((0x30 + k).toUInt8 : UInt8) ∧ ((0x30 + k).toUInt8 : UInt8) ≤ 0x7E := by
+  decide
+
+/-- English: A printed number is a visible token. -/
+theorem printNat_vis (n : Nat) : Vis (printNat n) := by
+  refine ⟨printNat_ne_nil n, ?_⟩
+  induction n using Nat.strongRecOn with
+  | _ n ih =>
+    unfold printNat
+    split
+    · rename_i hn; intro y hy; rw [List.mem_singleton.mp hy]; exact digit_vis n hn
+    · intro y hy; rw [List.mem_append] at hy
+      rcases hy with hy | hy
+      · exact ih (n / 10) (by omega) y hy
+      · rw [List.mem_singleton.mp hy]; exact digit_vis (n % 10) (Nat.mod_lt _ (by decide))
+
+/-- English: A visible token contains no space. -/
+theorem Vis.no_space {t : Bytes} (h : Vis t) : (0x20 : UInt8) ∉ t := by
+  intro hm; have := (h.2 _ hm).1; contradiction
+
+/-- English: Splitting a line always gives at least one piece. -/
+theorem splitSpaces_ne_nil (r : Bytes) : splitSpaces r ≠ [] := by
+  cases r with
+  | nil => simp [splitSpaces]
+  | cons b rest =>
+    unfold splitSpaces; split
+    · simp
+    · split <;> simp
+
+/-- English: Splitting a space-free prefix followed by the rest joins the prefix onto the rest's first piece. -/
+theorem splitSpaces_append (t r : Bytes) (ht : (0x20 : UInt8) ∉ t) :
+    splitSpaces (t ++ r) = match splitSpaces r with
+      | [] => [t]
+      | u :: us => (t ++ u) :: us := by
+  induction t with
+  | nil =>
+    cases h : splitSpaces r with
+    | nil => exact absurd h (splitSpaces_ne_nil r)
+    | cons u us => simp [h]
+  | cons b bs ih =>
+    have hb : b ≠ 0x20 := fun e => ht (by simp [e])
+    have ih' := ih (fun h => ht (List.mem_cons_of_mem _ h))
+    simp only [List.cons_append]
+    conv => lhs; unfold splitSpaces
+    rw [ih']
+    cases h : splitSpaces r with
+    | nil => exact absurd h (splitSpaces_ne_nil r)
+    | cons u us => simp [hb]
+
+/-- English: A line starting with a space splits into an empty piece followed by the pieces of the rest. -/
+theorem splitSpaces_space (rest : Bytes) :
+    splitSpaces (0x20 :: rest) = [] :: splitSpaces rest := by
+  conv => lhs; unfold splitSpaces
+  cases h : splitSpaces rest with
+  | nil => exact absurd h (splitSpaces_ne_nil rest)
+  | cons u us => simp
+
+/-- English: Splitting a line made by joining visible tokens with spaces gives back the tokens. -/
+theorem split_join : ∀ (toks : List Bytes), toks ≠ [] → (∀ t ∈ toks, Vis t) →
+    splitSpaces (joinSpaces toks) = toks
+  | [], h, _ => absurd rfl h
+  | [t], _, hv => by
+    have := splitSpaces_append t [] (hv t (by simp)).no_space
+    simp only [List.append_nil] at this
+    simp only [joinSpaces]; rw [this]; simp [splitSpaces]
+  | t :: t2 :: ts, _, hv => by
+    have hrest := split_join (t2 :: ts) (by simp) (fun x hx => hv x (List.mem_cons_of_mem _ hx))
+    simp only [joinSpaces]
+    rw [splitSpaces_append t _ (hv t (by simp)).no_space, splitSpaces_space]
+    rw [show joinSpaces (t2 :: ts) = joinSpaces (t2 :: ts) from rfl] at hrest
+    cases ts with
+    | nil => simp [joinSpaces] at hrest ⊢; rw [hrest]
+    | cons t3 ts' => simp only [joinSpaces] at hrest ⊢; rw [hrest]; simp
+
+/-- English: Tokenizing a line made by joining visible tokens with spaces gives back the tokens. -/
+theorem tokenize_join (toks : List Bytes) (hne : toks ≠ []) (hv : ∀ t ∈ toks, Vis t) :
+    tokenize (joinSpaces toks) = some toks := by
+  unfold tokenize
+  rw [split_join toks hne hv]
+  have : toks.any (·.isEmpty) = false := by
+    rw [List.any_eq_false]; intro t ht; simpa using (hv t ht).1
+  simp [this]
+
+/-- English: Every keyword is a visible token. -/
+theorem vis_kw : Vis kwGet ∧ Vis kwPut ∧ Vis kwDelete ∧ Vis kwScan ∧ Vis kwBatch ∧ Vis kwCheck ∧
+    Vis kwInf ∧ Vis kwOK ∧ Vis kwValue ∧ Vis kwNotFound ∧ Vis kwPairs ∧ Vis kwLog ∧ Vis kwErr ∧
+    Vis kwUsage ∧ Vis kwLimit ∧ Vis kwCorrupt ∧ Vis kwIO := by
+  have v : ∀ t : Bytes, t ≠ [] → t.all (fun y => 0x21 ≤ y && y ≤ 0x7E) = true → Vis t := by
+    intro t h1 h2; refine ⟨h1, fun y hy => ?_⟩
+    have := List.all_eq_true.mp h2 y hy; simpa using this
+  refine ⟨v _ (by decide) (by decide), v _ (by decide) (by decide), v _ (by decide) (by decide),
+    v _ (by decide) (by decide), v _ (by decide) (by decide), v _ (by decide) (by decide),
+    v _ (by decide) (by decide), v _ (by decide) (by decide), v _ (by decide) (by decide),
+    v _ (by decide) (by decide), v _ (by decide) (by decide), v _ (by decide) (by decide),
+    v _ (by decide) (by decide), v _ (by decide) (by decide), v _ (by decide) (by decide),
+    v _ (by decide) (by decide), v _ (by decide) (by decide)⟩
+
+/-- English: A `LOG` field (`records=`, `bytes=` or `tail_ignored=` followed by a number) is a visible token. -/
+theorem kwEq_vis (p : Bytes) (hp : p ∈ [kwRecordsEq, kwBytesEq, kwTailEq]) (n : Nat) :
+    Vis (p ++ printNat n) := by
+  refine ⟨by simp [printNat_ne_nil], ?_⟩
+  intro y hy; rw [List.mem_append] at hy
+  rcases hy with hy | hy
+  · simp only [List.mem_cons, List.not_mem_nil, or_false] at hp
+    rcases hp with rfl | rfl | rfl <;> revert y <;> decide
+  · exact (printNat_vis n).2 y hy
+
+/-- English: The reserved token `\inf` is not a byte string. -/
+theorem decodeBytes_kwInf : decodeBytes kwInf = none := by decide
+
+/-- English: No encoded byte string is the reserved token `\inf`. -/
+theorem encodeBytes_ne_kwInf (b : Bytes) : encodeBytes b ≠ kwInf := by
+  intro h; have := decodeBytes_encodeBytes b; rw [h, decodeBytes_kwInf] at this; simp at this
+
+/-- English: Reading a printed scan upper end gives back the original. -/
+theorem parseUpper_printUpper (u : Upper Bytes) : parseUpper (printUpper u) = some u := by
+  cases u with
+  | unbounded => decide
+  | below hi =>
+    simp [parseUpper, printUpper, encodeBytes_ne_kwInf, decodeBytes_encodeBytes]
+
+/-- English: Reading the printed writes of a batch gives back the original writes. -/
+theorem parseOps_flatMap (ops : List (WriteOp Bytes)) : parseOps (ops.flatMap opTokens) = some ops := by
+  induction ops with
+  | nil => rfl
+  | cons op ops ih =>
+    cases op with
+    | put k v =>
+      have h1 : (kwPut == kwDelete) = false := by decide
+      simp only [List.flatMap_cons, opTokens, List.cons_append, List.nil_append]
+      unfold parseOps
+      simp [h1, decodeBytes_encodeBytes, ih]
+    | delete k =>
+      simp only [List.flatMap_cons, opTokens, List.cons_append, List.nil_append]
+      unfold parseOps
+      simp [decodeBytes_encodeBytes, ih]
+
+/-- English: A printed scan upper end is a visible token. -/
+theorem upper_vis (u : Upper Bytes) : Vis (printUpper u) := by
+  cases u with
+  | unbounded => exact vis_kw.2.2.2.2.2.2.1
+  | below hi => exact encodeBytes_vis hi
+
+/-- English: Every token of a printed write is visible. -/
+theorem opTokens_vis (op : WriteOp Bytes) : ∀ t ∈ opTokens op, Vis t := by
+  intro t ht
+  cases op with
+  | put k v =>
+    simp only [opTokens, List.mem_cons, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | rfl | rfl
+    · exact vis_kw.2.1
+    · exact encodeBytes_vis _
+    · exact encodeBytes_vis _
+  | delete k =>
+    simp only [opTokens, List.mem_cons, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | rfl
+    · exact vis_kw.2.2.1
+    · exact encodeBytes_vis _
+
+/-- English: Every token of a printed request is visible. -/
+theorem requestTokens_vis (r : Request Bytes) : ∀ t ∈ requestTokens r, Vis t := by
+  intro t ht
+  rcases r with ⟨c⟩ | _
+  · cases c with
+    | get k =>
+      simp only [requestTokens, List.mem_cons, List.not_mem_nil, or_false] at ht
+      rcases ht with rfl | rfl
+      · exact vis_kw.1
+      · exact encodeBytes_vis _
+    | put k v =>
+      simp only [requestTokens, List.mem_cons, List.not_mem_nil, or_false] at ht
+      rcases ht with rfl | rfl | rfl
+      · exact vis_kw.2.1
+      · exact encodeBytes_vis _
+      · exact encodeBytes_vis _
+    | delete k =>
+      simp only [requestTokens, List.mem_cons, List.not_mem_nil, or_false] at ht
+      rcases ht with rfl | rfl
+      · exact vis_kw.2.2.1
+      · exact encodeBytes_vis _
+    | scan lo hi n =>
+      simp only [requestTokens, List.mem_cons, List.not_mem_nil, or_false] at ht
+      rcases ht with rfl | rfl | rfl | rfl
+      · exact vis_kw.2.2.2.1
+      · exact encodeBytes_vis _
+      · exact upper_vis _
+      · exact printNat_vis _
+    | batch ops =>
+      simp only [requestTokens, List.mem_cons, List.mem_flatMap] at ht
+      rcases ht with rfl | ⟨op, _, hop⟩
+      · exact vis_kw.2.2.2.2.1
+      · exact opTokens_vis op t hop
+  · simp only [requestTokens, List.mem_cons, List.not_mem_nil, or_false] at ht
+    subst ht; exact vis_kw.2.2.2.2.2.1
+
+/-- English: A printed request has at least one token. -/
+theorem requestTokens_ne_nil (r : Request Bytes) : requestTokens r ≠ [] := by
+  rcases r with ⟨c⟩ | _ <;> (try cases c) <;> simp [requestTokens]
 
 /-- English: Parsing a printed request gives back exactly the original request (R22). -/
-theorem parseRequest_printRequest (r : Request Bytes) : parseRequest (printRequest r) = some r :=
-  sorry
+theorem parseRequest_printRequest (r : Request Bytes) : parseRequest (printRequest r) = some r := by
+  unfold parseRequest printRequest
+  rw [tokenize_join _ (requestTokens_ne_nil r) (requestTokens_vis r)]
+  simp only [Option.bind_eq_bind, Option.bind_some]
+  have d := decodeBytes_encodeBytes
+  rcases r with ⟨c⟩ | _
+  · cases c with
+    | get k => simp [requestTokens, parseRequestTokens, d]
+    | put k v =>
+      have : (kwPut == kwGet) = false := by decide
+      simp [requestTokens, parseRequestTokens, d, this]
+    | delete k =>
+      have h1 : (kwDelete == kwGet) = false := by decide
+      have h2 : (kwDelete == kwPut) = false := by decide
+      simp [requestTokens, parseRequestTokens, d, h1, h2]
+    | scan lo hi n =>
+      have h1 : (kwScan == kwGet) = false := by decide
+      have h2 : (kwScan == kwPut) = false := by decide
+      have h3 : (kwScan == kwDelete) = false := by decide
+      simp [requestTokens, parseRequestTokens, d, h1, h2, h3, parseUpper_printUpper,
+        parseNat_printNat]
+    | batch ops =>
+      have h1 : (kwBatch == kwGet) = false := by decide
+      have h2 : (kwBatch == kwPut) = false := by decide
+      have h3 : (kwBatch == kwDelete) = false := by decide
+      have h4 : (kwBatch == kwScan) = false := by decide
+      simp [requestTokens, parseRequestTokens, h1, h2, h3, h4, parseOps_flatMap]
+  · decide
+
+/-- English: A byte string is a prefix of itself followed by anything. -/
+theorem isPrefixOf_self_append (p x : Bytes) : p.isPrefixOf (p ++ x) = true := by
+  induction p with
+  | nil => rfl
+  | cons a p ih => simp [ih]
+
+/-- English: Stripping prefix p from p followed by x gives x. -/
+theorem stripPrefix_append (p x : Bytes) : stripPrefix p (p ++ x) = some x := by
+  simp [stripPrefix, isPrefixOf_self_append]
+
+/-- English: Reading the printed pairs of a `PAIRS` reply gives back the original pairs. -/
+theorem parsePairTokens_flatMap (kvs : List (Bytes × Bytes)) :
+    parsePairTokens (kvs.flatMap (fun p => [encodeBytes p.1, encodeBytes p.2])) = some kvs := by
+  induction kvs with
+  | nil => rfl
+  | cons p kvs ih =>
+    simp only [List.flatMap_cons, List.cons_append, List.nil_append]
+    unfold parsePairTokens
+    simp [decodeBytes_encodeBytes, ih]
+
+/-- English: Every token of a printed reply is visible. -/
+theorem replyTokens_vis (r : Reply Bytes) : ∀ t ∈ replyTokens r, Vis t := by
+  intro t ht
+  cases r with
+  | ok => simp [replyTokens] at ht; subst ht; exact vis_kw.2.2.2.2.2.2.2.1
+  | value v =>
+    simp only [replyTokens, List.mem_cons, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | rfl
+    · exact vis_kw.2.2.2.2.2.2.2.2.1
+    · exact encodeBytes_vis _
+  | notFound => simp [replyTokens] at ht; subst ht; exact vis_kw.2.2.2.2.2.2.2.2.2.1
+  | pairs kvs =>
+    simp only [replyTokens, List.mem_cons, List.mem_flatMap] at ht
+    rcases ht with rfl | rfl | ⟨p, _, hp⟩
+    · exact vis_kw.2.2.2.2.2.2.2.2.2.2.1
+    · exact printNat_vis _
+    · simp only [List.not_mem_nil, or_false] at hp
+      rcases hp with rfl | rfl <;> exact encodeBytes_vis _
+  | log r b c =>
+    simp only [replyTokens, List.mem_cons, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | rfl | rfl | rfl
+    · exact vis_kw.2.2.2.2.2.2.2.2.2.2.2.1
+    · exact kwEq_vis _ (by simp) _
+    · exact kwEq_vis _ (by simp) _
+    · exact kwEq_vis _ (by simp) _
+  | usageError d | limitError d | ioError d =>
+    simp only [replyTokens, List.mem_cons, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | rfl | rfl
+    · exact vis_kw.2.2.2.2.2.2.2.2.2.2.2.2.1
+    all_goals first
+      | exact vis_kw.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+      | exact vis_kw.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+      | exact vis_kw.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2
+      | exact encodeBytes_vis _
+  | corrupt p =>
+    simp only [replyTokens, List.mem_cons, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | rfl | rfl
+    · exact vis_kw.2.2.2.2.2.2.2.2.2.2.2.2.1
+    · exact vis_kw.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+    · exact printNat_vis _
+
+/-- English: A printed reply has at least one token. -/
+theorem replyTokens_ne_nil (r : Reply Bytes) : replyTokens r ≠ [] := by
+  cases r <;> simp [replyTokens]
 
 /-- English: Parsing a printed reply gives back exactly the original reply (R22). -/
-theorem parseReply_printReply (r : Reply Bytes) : parseReply (printReply r) = some r := sorry
+theorem parseReply_printReply (r : Reply Bytes) : parseReply (printReply r) = some r := by
+  unfold parseReply printReply
+  rw [tokenize_join _ (replyTokens_ne_nil r) (replyTokens_vis r)]
+  simp only [Option.bind_eq_bind, Option.bind_some]
+  have d := decodeBytes_encodeBytes
+  have n := parseNat_printNat
+  cases r with
+  | ok => decide
+  | notFound => decide
+  | value v =>
+    have h1 : (kwValue == kwOK) = false := by decide
+    have h2 : (kwValue == kwNotFound) = false := by decide
+    simp only [replyTokens]; delta parseReplyTokens; simp [d, h1, h2]
+  | pairs kvs =>
+    have h1 : (kwPairs == kwOK) = false := by decide
+    have h2 : (kwPairs == kwNotFound) = false := by decide
+    have h3 : (kwPairs == kwValue) = false := by decide
+    simp only [replyTokens]; delta parseReplyTokens; simp [n, h1, h2, h3, parsePairTokens_flatMap]
+  | log a b c =>
+    have h1 : (kwLog == kwOK) = false := by decide
+    have h2 : (kwLog == kwNotFound) = false := by decide
+    have h3 : (kwLog == kwValue) = false := by decide
+    have h4 : (kwLog == kwPairs) = false := by decide
+    simp only [replyTokens]; delta parseReplyTokens; simp [n, h1, h2, h3, h4, stripPrefix_append]
+  | usageError e | limitError e | corrupt e | ioError e =>
+    have h1 : (kwErr == kwOK) = false := by decide
+    have h2 : (kwErr == kwNotFound) = false := by decide
+    have h3 : (kwErr == kwValue) = false := by decide
+    have h4 : (kwErr == kwPairs) = false := by decide
+    have h5 : (kwErr == kwLog) = false := by decide
+    have k1 : (kwLimit == kwUsage) = false := by decide
+    have k2 : (kwCorrupt == kwUsage) = false := by decide
+    have k3 : (kwCorrupt == kwLimit) = false := by decide
+    have k4 : (kwIO == kwUsage) = false := by decide
+    have k5 : (kwIO == kwLimit) = false := by decide
+    have k6 : (kwIO == kwCorrupt) = false := by decide
+    simp only [replyTokens]; delta parseReplyTokens; simp [d, n, h1, h2, h3, h4, h5, k1, k2, k3, k4, k5, k6]
+
+/-- English: Joining visible tokens with spaces gives a line with no newline byte. -/
+theorem join_no_newline : ∀ (toks : List Bytes), (∀ t ∈ toks, Vis t) →
+    (0x0A : UInt8) ∉ joinSpaces toks
+  | [], _ => by simp [joinSpaces]
+  | [t], hv => fun h => by
+    have := ((hv t (by simp)).2 _ (by simpa [joinSpaces] using h)).1; contradiction
+  | t :: t2 :: ts, hv => by
+    simp only [joinSpaces, List.mem_append, List.mem_cons, not_or]
+    refine ⟨fun h => ?_, by decide, join_no_newline (t2 :: ts) (fun x hx => hv x (List.mem_cons_of_mem _ hx))⟩
+    have := ((hv t (by simp)).2 _ h).1; contradiction
 
 /-- English: A printed request or reply is a single line: it contains no newline byte, so
 the server's one-line-per-command framing (R15) is safe. -/
 theorem printed_no_newline (q : Request Bytes) (r : Reply Bytes) :
-    (0x0A : UInt8) ∉ printRequest q ∧ (0x0A : UInt8) ∉ printReply r := sorry
+    (0x0A : UInt8) ∉ printRequest q ∧ (0x0A : UInt8) ∉ printReply r :=
+  ⟨join_no_newline _ (requestTokens_vis q), join_no_newline _ (replyTokens_vis r)⟩
+
+/-- English: An encoded byte string is a non-empty token made only of visible ASCII
+characters, so it never contains a space or a newline (R22). -/
+theorem encodeBytes_visible (b : Bytes) :
+    encodeBytes b ≠ [] ∧ ∀ x ∈ encodeBytes b, 0x21 ≤ x ∧ x ≤ 0x7E := encodeBytes_vis b
 
 end LeanKV.Spec

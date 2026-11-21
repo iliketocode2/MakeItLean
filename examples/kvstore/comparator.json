@@ -1,0 +1,15 @@
+{
+  "challenge_module": "LeanKV.Spec",
+  "solution_module": "LeanKV.Spec",
+  "theorem_names": [
+    "LeanKV.Spec.impl_run_eq", "LeanKV.Spec.impl_toList_eq", "LeanKV.Spec.impl_height_le",
+    "LeanKV.Spec.impl_encodeRecord_eq", "LeanKV.Spec.impl_recover_eq",
+    "LeanKV.Spec.store_no_faults", "LeanKV.Spec.store_crash_consistent",
+    "LeanKV.Spec.store_refuses_corrupt", "LeanKV.Spec.storeCheck_spec"
+  ],
+  "definition_names": [
+    "LeanKV.Spec.Impl.step", "LeanKV.Spec.Impl.encodeRecord", "LeanKV.Spec.Impl.recover",
+    "LeanKV.Spec.Impl.openStore", "LeanKV.Spec.Impl.exec"
+  ],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}
