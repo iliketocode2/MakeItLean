@@ -1,0 +1,10 @@
+{
+  "spec_module": "Counter.Spec",
+  "hole_files": ["Counter/Spec/Contract.lean"],
+  "impl_dir": "impl",
+  "solution_module": "CounterSol.Holes",
+  "solution_imports": ["CounterImpl.Proofs"],
+  "holes": { "Counter.Spec.Impl.pick": "CounterImpl.pick" },
+  "obligations": { "Counter.Spec.impl_pick_ok": "CounterImpl.pick_ok t c hw" },
+  "lock_files": ["Counter/Spec.lean", "Counter/Spec/Model.lean", "Counter/Spec/Contract.lean"]
+}

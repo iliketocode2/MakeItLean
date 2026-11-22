@@ -1,0 +1,10 @@
+{
+  "spec_module": "AppName.Spec",
+  "hole_files": ["AppName/Spec/Contract.lean"],
+  "impl_dir": "impl",
+  "solution_module": "AppNameSol.Holes",
+  "solution_imports": ["AppNameImpl.Proofs"],
+  "holes": { "AppName.Spec.Impl.pick": "AppNameImpl.pick" },
+  "obligations": { "AppName.Spec.impl_pick_ok": "AppNameImpl.pick_ok t c hw" },
+  "lock_files": ["AppName/Spec.lean", "AppName/Spec/Model.lean", "AppName/Spec/Contract.lean"]
+}

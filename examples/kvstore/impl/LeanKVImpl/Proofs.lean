@@ -11,3 +11,4 @@ import LeanKVImpl.Proofs.Canon
 import LeanKVImpl.Proofs.Session
 import LeanKVImpl.Proofs.Crc
 import LeanKVImpl.Proofs.Line
+import LeanKVImpl.Proofs.Substrate

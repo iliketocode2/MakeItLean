@@ -15,7 +15,7 @@ A framework that any coding agent (Claude Code, Codex, Cursor, …) can be attac
 | First pilot | Key-value store / mini DB |
 | Human role | The user reviews a **side-by-side spec**: plain-English requirement next to each Lean definition and theorem. The framework must generate that rendering. |
 | Agents supported | Agent-agnostic (`AGENTS.md`), with Claude Code configs and skills as the first-class path |
-| `mil` CLI language | **Lean 4** (using `leanprover/Cli`), so the framework is built with itself. Its own logic (spec-lock hashing, gate sequencing, trust-manifest generation) is a candidate for the framework's own specs and proofs. |
+| `mil` CLI language | **Lean 4, no external dependencies** (decided 2026-11-22, replacing `leanprover/Cli`: toolchain churn broke four APIs during the pilot). The framework is built with itself. Its own logic (spec-lock hashing, gate sequencing, trust-manifest generation) is a candidate for the framework's own specs and proofs. |
 | Environment | Native Windows runs elan 4.4.0 with Lean 4.36.0, but **Smart App Control blocks the unsigned `libleanshared.dll`** (CodeIntegrity events 3033/3077, exit 0xC0E90002). **Decision: develop in WSL Ubuntu-24.04**, where elan and Lean 4.36.0 are installed. Phase-0 comparator smoke test passed on 2026-11-20: the honest solution exits 0; `sorry`, a custom axiom, a weakened statement and a redefined spec definition are each rejected with exit 1. That first run used `--inadvisably-no-sandbox`. `bubblewrap` is now installed, and on 2026-11-21 `tests/comparator-smoke/run.sh` passed 5/5 sandboxed. |
 
 ## Core architecture: the pattern every app follows
@@ -87,6 +87,7 @@ MakeItLean/
 **Phase 2: extract the framework.**
 - Turn what the pilot needed into the library, the CLI, templates and agent instructions.
 - *Exit:* a **fresh agent session that uses only the framework** rebuilds a variant of the pilot, or a second small app, without my hand-holding.
+- Decided 2026-11-22: the exit app is a **double-entry bank ledger** (a new durable app), built by a fresh subagent in a git worktree. Plan: [PHASE2.md](PHASE2.md).
 
 **Phase 3: hybrid and multi-agent.**
 - A second app with a non-Lean shell (for example, a TypeScript or Rust HTTP layer) checked by differential tests against the Lean model.
