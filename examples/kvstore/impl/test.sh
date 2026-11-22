@@ -15,4 +15,6 @@ echo "== Real-file self-test (C leaf + core vs reference model)"
 .lake/build/bin/leankv-selftest "$TMP/selftest" 40
 echo "== Kill tests (real process, SIGKILL at random points)"
 python3 -I tests/kill_test.py "$TMP/kill" 40
+echo "== Limits (R1/R8a maxima end to end; stack-depth regression)"
+tests/limits_test.sh "$TMP/limits"
 ../tools/check_lock.sh

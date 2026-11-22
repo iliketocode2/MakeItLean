@@ -1,4 +1,5 @@
 import LeanKVImpl.Proofs.Step
+import LeanKVImpl.Proofs.Crc
 import LeanKVImpl.Proofs.Encode
 
 /-! `impl_recover_eq`: the `ByteArray` decoder and recovery follow the spec step by step (Stage 4). -/
@@ -45,11 +46,11 @@ theorem unstuffN_plain (n : Nat) (x : UInt8) (hx : x ≠ 0xC7) (r : Bytes) :
   · simp only [bind, Option.bind]; cases unstuffN n r <;> rfl
   all_goals (intros; simp_all)
 
-theorem unstuffAt_spec (b : ByteArray) : ∀ (n i : Nat) (acc : ByteArray),
-    (unstuffAt b n i acc).map (fun p => (toBytes p.1, p.2)) =
-      (unstuffN n ((toBytes b).drop i)).map (fun p => (toBytes acc ++ p.1, p.2))
-  | 0, i, acc => by simp [unstuffAt, unstuffN]
-  | n + 1, i, acc => by
+theorem unstuffAt_spec (b : ByteArray) : ∀ (n i : Nat) (acc : ByteArray) (used : Nat),
+    (unstuffAt b n i acc used).map (fun p => (toBytes p.1, p.2)) =
+      (unstuffN n ((toBytes b).drop i)).map (fun p => (toBytes acc ++ p.1, used + p.2))
+  | 0, i, acc, used => by simp [unstuffAt, unstuffN]
+  | n + 1, i, acc, used => by
     unfold unstuffAt
     by_cases hi : i < b.size
     · rw [dif_pos hi, drop_toBytes_cons b i hi]
@@ -59,21 +60,16 @@ theorem unstuffAt_spec (b : ByteArray) : ∀ (n i : Nat) (acc : ByteArray),
         · rw [dif_pos hi1, drop_toBytes_cons b (i + 1) hi1]
           by_cases hy : b[i + 1] = 0x00
           · rw [hy]; simp only [beq_self_eq_true, ↓reduceIte, unstuffN_C7_00, Option.map_map]
-            have ih := unstuffAt_spec b n (i + 2) (acc.push 0xC7)
-            rw [show i + 1 + 1 = i + 2 by omega]
-            cases h1 : unstuffAt b n (i + 2) (acc.push 0xC7) <;>
-              cases h2 : unstuffN n ((toBytes b).drop (i + 2)) <;> rw [h1, h2] at ih <;>
-              simp_all [toBytes_push]
+            rw [unstuffAt_spec b n (i + 2) (acc.push 0xC7) (used + 2), show i + 1 + 1 = i + 2 by omega]
+            cases unstuffN n ((toBytes b).drop (i + 2)) <;> simp [toBytes_push]; omega
           · simp only [show (b[i + 1] == 0x00) = false by simpa using hy, Bool.false_eq_true,
               ↓reduceIte, unstuffN_C7_bad n _ hy]
             rfl
         · rw [dif_neg hi1, drop_toBytes_nil b (i + 1) hi1, unstuffN_C7_end]; rfl
       · simp only [show (b[i] == 0xC7) = false by simpa using hx, Bool.false_eq_true, ↓reduceIte,
           unstuffN_plain n _ hx, Option.map_map]
-        have ih := unstuffAt_spec b n (i + 1) (acc.push b[i])
-        cases h1 : unstuffAt b n (i + 1) (acc.push b[i]) <;>
-          cases h2 : unstuffN n ((toBytes b).drop (i + 1)) <;> rw [h1, h2] at ih <;>
-          simp_all [toBytes_push]
+        rw [unstuffAt_spec b n (i + 1) (acc.push b[i]) (used + 1)]
+        cases unstuffN n ((toBytes b).drop (i + 1)) <;> simp [toBytes_push]; omega
     · rw [dif_neg hi, drop_toBytes_nil b i hi]; rfl
 
 /-! ### Numbers, writes, payloads -/
@@ -268,9 +264,9 @@ theorem decodeAt_spec (b : ByteArray) (pos : Nat) :
   by_cases hm : magicAt b pos = true
   · simp only [hm, Bool.not_true, Bool.false_eq_true, ↓reduceIte, bind, Option.bind,
       show magic.length = 4 from rfl, List.drop_drop]
-    have u1 := unstuffAt_spec b 4 (pos + 4) ByteArray.empty
-    simp only [toBytes_empty, List.nil_append] at u1
-    cases h1 : unstuffAt b 4 (pos + 4) ByteArray.empty <;>
+    have u1 := unstuffAt_spec b 4 (pos + 4) ByteArray.empty 0
+    simp only [toBytes_empty, List.nil_append, Nat.zero_add] at u1
+    cases h1 : unstuffAt b 4 (pos + 4) ByteArray.empty 0 <;>
       cases h1' : unstuffN 4 ((toBytes b).drop (pos + 4)) <;> simp only [h1, h1'] at u1
     · rfl
     · simp at u1
@@ -286,9 +282,9 @@ theorem decodeAt_spec (b : ByteArray) (pos : Nat) :
     | none => rfl
     | some len =>
       simp only [Option.map_some]
-      have u2 := unstuffAt_spec b (len + 4) (pos + 4 + us1) ByteArray.empty
-      simp only [toBytes_empty, List.nil_append] at u2
-      cases h2 : unstuffAt b (len + 4) (pos + 4 + us1) ByteArray.empty <;>
+      have u2 := unstuffAt_spec b (len + 4) (pos + 4 + us1) ByteArray.empty 0
+      simp only [toBytes_empty, List.nil_append, Nat.zero_add] at u2
+      cases h2 : unstuffAt b (len + 4) (pos + 4 + us1) ByteArray.empty 0 <;>
         cases h2' : unstuffN (len + 4) ((toBytes b).drop (pos + 4 + us1)) <;> simp only [h2, h2'] at u2
       · rfl
       · simp at u2
@@ -305,7 +301,7 @@ theorem decodeAt_spec (b : ByteArray) (pos : Nat) :
         show toBytes _ = _
         rw [toBytes_extract, Nat.add_sub_cancel_left, List.take_of_length_le]
         simp [toBytes_length]; omega
-      simp only [crc32cBA, toBytes_append, ep, ec]
+      simp only [crc32cBA_eq, toBytes_append, ep, ec]
       split
       · have dp := decodePayloadBA_spec (more.extract 0 len)
         rw [ep] at dp
@@ -322,11 +318,13 @@ theorem decodeAt_spec (b : ByteArray) (pos : Nat) :
 
 /-! ### Reading records and recovery -/
 
-theorem readFrom_spec (b : ByteArray) : ∀ (fuel pos : Nat), pos ≤ b.size → b.size - pos < fuel →
-    (readFrom b fuel pos).1.map (List.map (WriteOp.map toBytes)) = (readRecords ((toBytes b).drop pos)).1 ∧
-      (readFrom b fuel pos).2 = pos + (readRecords ((toBytes b).drop pos)).2
-  | 0, _, _, h => by omega
-  | fuel + 1, pos, hp, hf => by
+theorem readFrom_spec (b : ByteArray) : ∀ (fuel pos : Nat) (acc : Array (List (WriteOp ByteArray))),
+    pos ≤ b.size → b.size - pos < fuel →
+    (readFrom b fuel pos acc).1.map (List.map (WriteOp.map toBytes)) =
+        acc.toList.map (List.map (WriteOp.map toBytes)) ++ (readRecords ((toBytes b).drop pos)).1 ∧
+      (readFrom b fuel pos acc).2 = pos + (readRecords ((toBytes b).drop pos)).2
+  | 0, _, _, _, h => by omega
+  | fuel + 1, pos, acc, hp, hf => by
     have hd := decodeAt_spec b pos
     unfold readFrom
     rw [readRecords]
@@ -341,10 +339,11 @@ theorem readFrom_spec (b : ByteArray) : ∀ (fuel pos : Nat), pos ≤ b.size →
       by_cases hc : 0 < n ∧ pos + n ≤ b.size
       · have hc' : 0 < n ∧ n ≤ ((toBytes b).drop pos).length := by rw [hlen]; omega
         rw [if_pos hc, dif_pos hc']
-        obtain ⟨ih1, ih2⟩ := readFrom_spec b fuel (pos + n) hc.2 (by omega)
+        obtain ⟨ih1, ih2⟩ := readFrom_spec b fuel (pos + n) (acc.push ops) hc.2 (by omega)
         rw [List.drop_drop]
-        simp only [List.map_cons, ih1, ih2]
-        refine ⟨trivial, by omega⟩
+        refine ⟨?_, ?_⟩
+        · rw [ih1]; simp [Nat.add_comm n pos]
+        · rw [ih2]; simp [Nat.add_comm n pos]; omega
       · have hc' : ¬ (0 < n ∧ n ≤ ((toBytes b).drop pos).length) := by rw [hlen]; omega
         rw [if_neg hc, dif_neg hc']; simp
 
@@ -381,8 +380,8 @@ theorem validAfter_spec (b : ByteArray) (p : Nat) :
 
 /-- `impl_recover_eq` for the core recovery. -/
 theorem core_recover_eq (b : ByteArray) : (Core.recover b).map toBytes = Spec.recover (toBytes b) := by
-  obtain ⟨h1, h2⟩ := readFrom_spec b (b.size + 1) 0 (by omega) (by omega)
-  simp only [List.drop_zero, Nat.zero_add] at h1 h2
+  obtain ⟨h1, h2⟩ := readFrom_spec b (b.size + 1) 0 #[] (by omega) (by omega)
+  simp only [List.drop_zero, Nat.zero_add, Array.toList_empty, List.map_nil, List.nil_append] at h1 h2
   unfold Core.recover Spec.recover
   simp only
   rw [validAfter_spec, h2]

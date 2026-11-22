@@ -17,35 +17,76 @@ open LeanKV.Spec
 
 /-! ## CRC-32C and encoding
 
-v1 uses the spec's bitwise CRC-32C and the spec's encoder directly, so their correctness
-obligations are immediate. A table-driven CRC and a direct `ByteArray` encoder are Stage 7
-optimizations, each needing a proof (`bv_decide` is not usable: it relies on the
-`Lean.ofReduceBool` axiom, which the comparator's axiom whitelist rejects).
+Stage 7 proof-licensed fast paths: the CRC is the spec's bitwise algorithm with its 8 steps
+written out and run directly on the array, and records are built directly in a `ByteArray`.
+Each is proven equal to the spec. (A table-driven CRC would need a 32-bit linearity proof;
+`bv_decide` is not usable, since it relies on the `Lean.ofReduceBool` axiom, which the
+comparator's whitelist rejects.)
 -/
 
-/-- CRC-32C of a byte array (the spec's bitwise definition). -/
-def crc32cBA (b : ByteArray) : UInt32 := crc32c (toBytes b)
+/-- One CRC-32C bit step (the body of the spec's `crc32cByte` loop). -/
+@[inline] def crcBit (c : UInt32) : UInt32 :=
+  if c &&& 1 == 1 then (c >>> 1) ^^^ 0x82F63B78 else c >>> 1
 
-/-- One record, in exactly the spec's format. Intended `Impl.encodeRecord`. -/
+/-- One byte of CRC-32C with the spec's 8 bit steps written out (no list allocation).
+Proof-licensed: equal to the spec's `crc32cByte` (`Proofs/Crc.lean`). -/
+@[inline] def crcByteFast (c : UInt32) (b : UInt8) : UInt32 :=
+  crcBit (crcBit (crcBit (crcBit (crcBit (crcBit (crcBit (crcBit (c ^^^ b.toUInt32))))))))
+
+/-- CRC-32C over `b` from index `i`, directly on the array (no conversion to a list). -/
+def crcLoop (b : ByteArray) (i : Nat) (c : UInt32) : UInt32 :=
+  if h : i < b.size then crcLoop b (i + 1) (crcByteFast c b[i]) else c
+termination_by b.size - i
+
+/-- CRC-32C of a byte array. Proof-licensed: equal to the spec's `crc32c (toBytes b)`. -/
+def crc32cBA (b : ByteArray) : UInt32 := crcLoop b 0 0xFFFFFFFF ^^^ 0xFFFFFFFF
+
+/-- Append a 4-byte little-endian number. -/
+def pushU32 (out : ByteArray) (n : Nat) : ByteArray :=
+  out |>.push (n % 256).toUInt8 |>.push (n / 256 % 256).toUInt8
+    |>.push (n / 65536 % 256).toUInt8 |>.push (n / 16777216 % 256).toUInt8
+
+/-- Append one stored write: tag, lengths, bytes. -/
+def pushOp (out : ByteArray) : WriteOp ByteArray → ByteArray
+  | .put k v => pushU32 (pushU32 (out.push 0x01) k.size ++ k) v.size ++ v
+  | .delete k => pushU32 (out.push 0x02) k.size ++ k
+
+/-- A batch's payload: the count, then each write. -/
+def encodePayloadBA (ops : List (WriteOp ByteArray)) : ByteArray :=
+  ops.foldl pushOp (pushU32 ByteArray.empty ops.length)
+
+/-- Append `src` from index `i`, writing 0xC7 as C7 00. Tail-recursive. -/
+def stuffInto (src : ByteArray) (i : Nat) (out : ByteArray) : ByteArray :=
+  if h : i < src.size then
+    let x := src[i]
+    stuffInto src (i + 1) (if x == 0xC7 then (out.push 0xC7).push 0x00 else out.push x)
+  else out
+termination_by src.size - i
+
+/-- One record, built directly in a `ByteArray`. Intended `Impl.encodeRecord`. Proof-licensed:
+its bytes are exactly the spec's `encodeRecord` (`Proofs/Encode.lean`). -/
 def encodeRecord (ops : List (WriteOp ByteArray)) : ByteArray :=
-  ofBytes (Spec.encodeRecord (ops.map (WriteOp.map toBytes)))
+  let p := encodePayloadBA ops
+  let lp := pushU32 ByteArray.empty p.size ++ p
+  let body := pushU32 lp (crc32cBA lp).toNat
+  stuffInto body 0 ⟨#[0xC7, 0x4B, 0x56, 0x31]⟩
 
 /-! ## Decoding (mirrors `decodeRecord`) -/
 
-/-- Read `n` original bytes from stuffed data starting at raw index `i`, appending to `acc`.
-Returns the bytes and the raw bytes used. Mirrors `unstuffN`. -/
-def unstuffAt (b : ByteArray) : Nat → Nat → ByteArray → Option (ByteArray × Nat)
-  | 0, _, acc => some (acc, 0)
-  | n + 1, i, acc =>
+/-- Read `n` original bytes from stuffed data starting at raw index `i`, appending to `acc`
+and adding the raw bytes used to `used`. Tail-recursive (constant stack, whatever the record
+size). Mirrors `unstuffN`. -/
+def unstuffAt (b : ByteArray) : Nat → Nat → ByteArray → Nat → Option (ByteArray × Nat)
+  | 0, _, acc, used => some (acc, used)
+  | n + 1, i, acc, used =>
     if h : i < b.size then
       let x := b[i]
       if x == 0xC7 then
         if h2 : i + 1 < b.size then
-          if b[i + 1] == 0x00 then
-            (unstuffAt b n (i + 2) (acc.push 0xC7)).map fun (o, u) => (o, u + 2)
+          if b[i + 1] == 0x00 then unstuffAt b n (i + 2) (acc.push 0xC7) (used + 2)
           else none
         else none
-      else (unstuffAt b n (i + 1) (acc.push x)).map fun (o, u) => (o, u + 1)
+      else unstuffAt b n (i + 1) (acc.push x) (used + 1)
     else none
 
 /-- Read a 4-byte little-endian number at index `i`. Mirrors `readU32le`. -/
@@ -95,9 +136,9 @@ def magicAt (b : ByteArray) (i : Nat) : Bool :=
 /-- Read one record starting at index `pos`: its batch and its length. Mirrors `decodeRecord`. -/
 def decodeAt (b : ByteArray) (pos : Nat) : Option (List (WriteOp ByteArray) × Nat) := do
   if !magicAt b pos then none
-  let (lenBytes, u1) ← unstuffAt b 4 (pos + 4) ByteArray.empty
+  let (lenBytes, u1) ← unstuffAt b 4 (pos + 4) ByteArray.empty 0
   let len ← readU32At lenBytes 0
-  let (more, u2) ← unstuffAt b (len + 4) (pos + 4 + u1) ByteArray.empty
+  let (more, u2) ← unstuffAt b (len + 4) (pos + 4 + u1) ByteArray.empty 0
   let payload := more.extract 0 len
   let crcBytes := more.extract len (len + 4)
   if crcBytes.toList == u32le (crc32cBA (lenBytes ++ payload)).toNat then
@@ -107,18 +148,18 @@ def decodeAt (b : ByteArray) (pos : Nat) : Option (List (WriteOp ByteArray) × N
 
 /-! ## Recovery (mirrors `recover`) -/
 
-/-- Read valid records from index `pos` while possible (at most `fuel` of them). Returns their
-batches and the index where reading stopped. Mirrors `readRecords`. -/
-def readFrom (b : ByteArray) : Nat → Nat → List (List (WriteOp ByteArray)) × Nat
-  | 0, pos => ([], pos)
-  | fuel + 1, pos =>
+/-- Read valid records from index `pos` while possible (at most `fuel` of them), appending
+their batches to `acc`. Returns all batches and the index where reading stopped. Tail-recursive.
+Mirrors `readRecords`. -/
+def readFrom (b : ByteArray) :
+    Nat → Nat → Array (List (WriteOp ByteArray)) → List (List (WriteOp ByteArray)) × Nat
+  | 0, pos, acc => (acc.toList, pos)
+  | fuel + 1, pos, acc =>
     match decodeAt b pos with
     | some (ops, n) =>
-      if 0 < n ∧ pos + n ≤ b.size then
-        let (rs, stop) := readFrom b fuel (pos + n)
-        (ops :: rs, stop)
-      else ([], pos)
-    | none => ([], pos)
+      if 0 < n ∧ pos + n ≤ b.size then readFrom b fuel (pos + n) (acc.push ops)
+      else (acc.toList, pos)
+    | none => (acc.toList, pos)
 
 /-- Whether a valid record starts anywhere after `p`. Only offsets holding 0xC7 can start one. -/
 def validAfter (b : ByteArray) (p : Nat) : Bool :=
@@ -126,7 +167,7 @@ def validAfter (b : ByteArray) (p : Nat) : Bool :=
 
 /-- Recovery on a `ByteArray` log. Intended `Impl.recover`. -/
 def recover (b : ByteArray) : Recovery ByteArray :=
-  let (recs, p) := readFrom b (b.size + 1) 0
+  let (recs, p) := readFrom b (b.size + 1) 0 #[]
   if validAfter b p then .corrupt p else .ok recs p (b.size - p)
 
 end LeanKV.Core

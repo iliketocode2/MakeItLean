@@ -49,7 +49,7 @@ def mutOpen (bug : Bug) : FsM (Except (Reply ByteArray) Handle) := do
   | some b =>
     let r := match LeanKV.Core.recover b, bug with
       | .corrupt _, .openIgnoresCorruption =>
-        let (bs, n) := LeanKV.Core.readFrom b (b.size + 1) 0; Recovery.ok bs n (b.size - n)
+        let (bs, n) := LeanKV.Core.readFrom b (b.size + 1) 0 #[]; Recovery.ok bs n (b.size - n)
       | r, _ => r
     match r with
     | .corrupt p => return .error (.corrupt p)

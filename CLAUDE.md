@@ -3,7 +3,7 @@
 A framework that lets AI coding agents build applications **spec-first in Lean 4**. The code that runs is either proven against a frozen, human-approved spec, or differentially tested against a Lean reference model. Performance comes from **proof-licensed optimization**: fast paths that are proven equal to simple reference semantics.
 
 - Plan and decisions: `docs/PLAN.md`. Research and sources: `docs/RESEARCH.md`. Read both before making design changes.
-- Current status: Phase 1 (KV-store pilot). Spec v2 frozen (`examples/kvstore/spec.lock`; never edit locked files). Stages 4–5 done. **Stage 6 done:** `examples/kvstore/tools/audit.sh` is the CI gate (lock, spec gates, spec axioms, comparator `--paranoid` on all 9 obligations, verified-module audit, all tests, anti-cheating smoke test). `examples/kvstore/TRUST.md` lists what is proven, tested and trusted. Next: Stage 7 (benchmarks vs SQLite (R19); proof-licensed optimizations: table CRC, direct `ByteArray` encoder), then Phase 2 (extract the framework). Log friction in `examples/kvstore/FRICTION.md`.
+- Current status: **Phase 1 (KV-store pilot) complete through Stage 7.** Spec v2 frozen (`examples/kvstore/spec.lock`). `examples/kvstore/tools/audit.sh` is the CI gate (comparator `--paranoid` accepts all 9 obligations; all tests). `TRUST.md` and `BENCHMARKS.md` are in `examples/kvstore/`. Next: Phase 2, extracting the framework (library, `mil` CLI, templates, agent instructions); `examples/kvstore/FRICTION.md` is the backlog. Remaining LeanKV optimizations are listed in BENCHMARKS.md.
 
 ## Environment
 - Work happens in WSL Ubuntu-24.04 at `~/MakeItLean`. Native Windows Lean is blocked by Smart App Control.

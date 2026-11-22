@@ -47,3 +47,13 @@ lean_lib LeanKVShell where
 lean_exe leankvSelftest where
   exeName := "leankv-selftest"
   root := `LeanKVImpl.Shell.SelfTest
+
+/-- In-process component profile (Stage 7). -/
+lean_exe leankvBench where
+  exeName := "leankv-bench"
+  root := `LeanKVImpl.Shell.Bench
+
+/-- Stage 7 stack/size stress probe. -/
+lean_exe leankvStress where
+  exeName := "leankv-stress"
+  root := `LeanKVImpl.Shell.Stress

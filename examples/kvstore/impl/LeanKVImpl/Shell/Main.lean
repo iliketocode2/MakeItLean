@@ -1,5 +1,6 @@
 import LeanKVImpl.Shell.FileIO
 import LeanKVImpl.Core.Store
+import LeanKVImpl.Core.Line
 import LeanKVSol.Base.Wire
 
 /-!
@@ -15,10 +16,17 @@ core, run on real files through the C leaf.
 namespace LeanKV.Shell
 open LeanKV.Spec
 
-/-- Write one reply line to stdout. -/
+/-- Write one reply line to stdout: the spec's reply tokens joined by single spaces, written
+token by token (the spec's `joinSpaces` recurses once per token; a large scan has millions).
+TRUSTED shell code; its output equals `printReply` by construction. -/
 def emit (r : Reply ByteArray) : IO Unit := do
   let out ← IO.getStdout
-  out.write (ofBytes (printReply (r.map toBytes) ++ [0x0A]))
+  let mut first := true
+  for t in replyTokens (r.map toBytes) do
+    unless first do out.write ⟨#[0x20]⟩
+    out.write (ofBytes t)
+    first := false
+  out.write ⟨#[0x0A]⟩
   out.flush
 
 /-- Exit code of a reply (R14 table). -/
@@ -32,9 +40,10 @@ fail-stop (exit 4), since after a failed fsync the on-disk state is unknown (R15
 partial def serveLoop (stdin : IO.FS.Stream) (h : Handle) (fd : UInt32) : IO UInt32 := do
   let line ← stdin.getLine
   if line.isEmpty then return 0
-  let bs := toBytes line.toUTF8
-  let bs := if bs.getLast? == some 0x0A then bs.dropLast else bs
-  match parseRequest bs with
+  let raw := line.toUTF8
+  let bs := if raw.size > 0 && raw[raw.size - 1]! == 0x0A then raw.extract 0 (raw.size - 1) else raw
+  -- `parseLine` is proven equal to the spec's `parseRequest` (Proofs/Line.lean)
+  match Core.parseLine bs with
   | none => emit (usage "bad command"); serveLoop stdin h fd
   | some .check => emit (usage "check is not available while serving"); serveLoop stdin h fd
   | some (.cmd c) =>
@@ -53,7 +62,7 @@ def run (args : List String) : IO UInt32 := do
       | .error r => emit r; return code r
       | .ok h => serveLoop (← IO.getStdin) h fd
     else
-      match parseRequest (toBytes (" ".intercalate rest).toUTF8) with
+      match Core.parseLine (" ".intercalate rest).toUTF8 with
       | none => emit (usage "bad command"); return 2
       | some .check =>
         let r ← (checkWith (m := RealM) Core.recover).run fd

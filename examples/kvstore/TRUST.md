@@ -32,12 +32,12 @@ examples/kvstore/tools/audit.sh        # the CI gate; prints AUDIT PASSED
 | R11 crash consistency | **Proven** on the model file system; **tested** beyond it | `store_crash_consistent`: under any fault script and any crash, the reopened log stands for exactly the acknowledged writes, plus possibly the one in flight, applied in full. After an I/O error the store answers `ERR IO` to everything. Tested: garbage crashes and multi-session chains (R23), SIGKILL (kill tests). |
 | R12 corruption detection | **Proven** relative to the checksum; collisions **accepted risk** | `recover_corrupt` (a bad record followed by a valid one is refused at its offset), `recover_torn_tail` (a torn write is ignored, *whatever the stored data*, thanks to byte stuffing and `magic_only_at_start`), `recover_after_truncate`, `store_refuses_corrupt` (refused without touching the disk), `impl_recover_eq` (the `ByteArray` recovery equals the spec's for *every* file content). Tested: every bit flip in mid-log records is refused, flips in the last record drop it (R23). Accepted: CRC-32C + magic collisions (about 2⁻⁶⁴ per offset); bit rot in the last record looks like a torn write. |
 | R13 compaction | Parked | Not in v1 (REQUIREMENTS §9). |
-| R14 CLI and exit codes | **Proven** (table, parsing); **tested** (binary) | `Reply.exitCode` is the single exit-code table; parsing proven (R22). The `leankv` binary was exercised on every requirement example. |
+| R14 CLI and exit codes | **Proven** (table, parsing); **tested** (binary) | `Reply.exitCode` is the single exit-code table. The shell parses with `parseLine`, proven equal to the spec's `parseRequest` for every line (`parseLine_eq`). The `leankv` binary was exercised on every requirement example. Values over 128 KB cannot be command-line arguments (Linux limit); use `serve`. |
 | R15 server mode | **Proven** parsing and framing; **tested** | `printed_no_newline` (one line per reply). Fail-stop on I/O error, continue on usage errors: shell code, tested manually and by the kill tests. |
 | R16 HTTP | Parked | Phase 3. |
-| R17 complexity | Height **proven**; wall-clock **benchmarked** (Stage 7) | `impl_height_le`: tree height ≤ 3·⌊log₂(n+1)⌋+2 (the AVL proof gives ≤ 2·⌊log₂(n+1)⌋+1). Known gap: the shape is proven, not how operations use it. Benchmarks are Stage 7. |
+| R17 complexity | Height **proven**; wall-clock **benchmarked** | `impl_height_le`: tree height ≤ 3·⌊log₂(n+1)⌋+2 (the AVL proof gives ≤ 2·⌊log₂(n+1)⌋+1). Known gap: the shape is proven, not how operations use it. Measured: `get` 0.58 µs, `put` 1.2 µs at 50k keys ([BENCHMARKS.md](BENCHMARKS.md)). |
 | R18 group commit | Batch-level only | A batch is one record with one fsync (`batch_serial` licenses it). Cross-command grouping in server mode is not implemented. Doing it would need a spec change (the store contract is per-command). |
-| R19 benchmark vs SQLite | Not yet | Stage 7. |
+| R19 benchmark vs SQLite | **Published** | [BENCHMARKS.md](BENCHMARKS.md): durable writes even (fsync-bound); batches within ~20%; reads and reopen slower end to end (pipe; whole-log replay). |
 | R20 library interface | **Proven** components | The reference model, recovery, parser/printer and exit codes are spec functions; the store is the proven core. |
 | R21 `check` | **Proven** | `storeCheck_spec`: `check` never modifies the disk and reports exactly the spec's recovery outcome. |
 | R22 text encoding | **Proven** | `decodeBytes_encodeBytes`, `parseRequest_printRequest`, `parseReply_printReply`, `encodeBytes_visible`, `printed_no_newline`. |
@@ -49,7 +49,7 @@ examples/kvstore/tools/audit.sh        # the CI gate; prints AUDIT PASSED
 |---|---|---|
 | The model file system's crash semantics (`Spec/Store.lean`) | It is the assumption the crash proofs rest on: a crash keeps a prefix of the durable or the current version. It was reviewed and signed off as part of the spec. | Garbage crashes go beyond it in the R23 harness. |
 | C leaf `impl/c/lkv_io.c` (open + lock + directory fsync, read, append, fsync, ftruncate, close; about 90 lines) | Lean 4.36 has no `fsync` and cannot truncate at an offset. | Real-file self-test (the real store vs the reference model, thousands of commands across sessions), kill tests. |
-| Shell `impl/LeanKVImpl/Shell/` (argument handling, stdin/stdout, the serve loop; uses one `partial def`) | Glue around proven functions. | Requirement examples run on the binary, kill tests. |
+| Shell `impl/LeanKVImpl/Shell/` (argument handling, stdin/stdout, the serve loop with one `partial def`, and writing reply tokens joined by spaces) | Glue around proven functions. The reply writer equals `printReply` by construction, but is not proven. | Requirement examples run on the binary, kill tests, limits test. |
 | Linux, the file system, `fsync` semantics | Outside Lean. | Power loss is **not** tested. Integrating a fault-injecting file system (LazyFS or dm-flakey) is a recorded follow-up. |
 | The Lean compiler, runtime and C toolchain | The running binary is compiled code; proofs are about the Lean definitions. | `--paranoid` re-checks the proofs with independent kernels; the binary is exercised by the real-file and kill tests. |
 | `lake comparator` and the Lean kernel | The judge. | Anti-cheating regression test (5/5), and the `--paranoid` external kernels. |
@@ -60,4 +60,5 @@ examples/kvstore/tools/audit.sh        # the CI gate; prints AUDIT PASSED
 - **Last-record bit rot:** a bit flip in the last acknowledged record is indistinguishable from a torn write, so the record is dropped without an error (REQUIREMENTS R12).
 - **Power loss** is covered by proof against the model file system, not by a real power-loss test.
 - **Complexity:** the tree's balance is proven; whether each operation actually runs in O(log n) is benchmarked, not proven.
-- **Performance shortcuts still owed proofs (Stage 7):** a table-driven CRC and a direct `ByteArray` encoder. v1 uses the spec's own bitwise CRC and encoder.
+- **Resource use is not proven.** The proofs cover results, not stack depth or memory. Benchmarking found a stack overflow on a valid 60 MB batch, now fixed with tail-recursive, proven-equal replacements. The R1/R8a maxima are a CI regression test (`impl/tests/limits_test.sh`).
+- **Not yet optimized:** CRC (table-driven), token decoding, reopen time (compaction, R13). See BENCHMARKS.md.
