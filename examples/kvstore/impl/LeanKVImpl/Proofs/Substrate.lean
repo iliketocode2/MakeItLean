@@ -149,4 +149,98 @@ theorem substrate_no_faults {C : Type} {pickI : Tree → C → Cmd ByteArray}
   simp only [map_run]
   exact ⟨_, _, rfl, hm, hi⟩
 
+/-! ## App-level crash consistency (Phase 2 post-test fix)
+
+`substrate_crash_consistent` speaks about LeanKV's reference store. An app also proves that its
+reference translation `pick` refines its own model (`Refines`). The theorems below compose the
+two, so an app's crash consistency is one kernel-checked theorem, not an argument in prose. -/
+
+/-- English: A reference translation `pick` refines an app model through `dec`: on every
+well-formed store, running the chosen KV command changes the decoded app state exactly as the
+model's step `mstep` does. -/
+def Refines {σ C : Type} (dec : Store → σ) (mstep : σ → C → σ) (pick : Store → C → Cmd Bytes) : Prop :=
+  ∀ st c, Store.WellFormed st → dec (step st (pick st c)).1 = mstep (dec st) c
+
+/-- English: A log that recovers cleanly stands for a well-formed store. -/
+theorem logState_wellFormed {c0 : Bytes} {s0 : Store} (hs0 : logState c0 = some s0) : Store.WellFormed s0 := by
+  obtain ⟨ho, hnf⟩ := open_spec hs0 []
+  obtain ⟨h, he, -⟩ := hnf rfl
+  unfold OpenOk at ho
+  rw [he] at ho
+  exact ho.2.2.2.2
+
+/-- English: The reference run keeps the store well-formed. -/
+theorem runPick_wellFormed {C : Type} (pick : Store → C → Cmd Bytes) :
+    ∀ (cs : List C) {s : Store}, Store.WellFormed s → Store.WellFormed (runPick pick s cs).1
+  | [], _, hs => hs
+  | c :: cs, _, hs => runPick_wellFormed pick cs (step_wellFormed hs (pick _ c))
+
+/-- English: If `pick` refines the model, the reference run decodes to the model run. -/
+theorem runPick_model {σ C : Type} {dec : Store → σ} {mstep : σ → C → σ} {pick : Store → C → Cmd Bytes}
+    (hr : Refines dec mstep pick) :
+    ∀ (cs : List C) {s : Store}, Store.WellFormed s → dec (runPick pick s cs).1 = cs.foldl mstep (dec s)
+  | [], _, _ => rfl
+  | c :: cs, s, hs => by
+    show dec (runPick pick (step s (pick s c)).1 cs).1 = cs.foldl mstep (mstep (dec s) c)
+    rw [runPick_model hr cs (step_wellFormed hs _), hr s c hs]
+
+/-- English: The outcome of a session as the app sees it. Either open failed with an I/O error
+and the log still stands for the starting store, or: the replies up to some command j match the
+reference run and are I/O errors after it, and the log after the crash stands for a store whose
+decoded app state is the model after the first j commands, or after j + 1. -/
+def AppOutcome {σ C : Type} (dec : Store → σ) (mstep : σ → C → σ) (pick : Store → C → Cmd Bytes)
+    (s0 : Store) (cs : List C) (o : Except (Reply ByteArray) (Handle × List (Reply ByteArray)))
+    (c1 : Bytes) : Prop :=
+  match o with
+  | .error r => r.isIOError = true ∧ logState c1 = some s0
+  | .ok (_, rs) => ∃ j ≤ cs.length,
+      rs.length = cs.length ∧
+      repliesMatch (rs.take j) ((runPick pick s0 cs).2.take j) = true ∧
+      (∀ r ∈ rs.drop j, r.isIOError = true) ∧
+      ∃ s, logState c1 = some s ∧
+        (dec s = (cs.take j).foldl mstep (dec s0) ∨
+          (j < cs.length ∧ dec s = (cs.take (j + 1)).foldl mstep (dec s0)))
+
+/-- English: The substrate's outcome for an app session (reference stores) gives the app's
+outcome (decoded model states), when `pick` refines the model from a well-formed start. -/
+theorem appOutcome_of {σ C : Type} {dec : Store → σ} {mstep : σ → C → σ} {pick : Store → C → Cmd Bytes}
+    (hr : Refines dec mstep pick) {s0 : Store} (hw0 : Store.WellFormed s0) (cs : List C)
+    (o : Except (Reply ByteArray) (Handle × List (Reply ByteArray))) (c1 : Bytes)
+    (hk : match o with
+      | .error r => r.isIOError = true ∧ logState c1 = some s0
+      | .ok (_, rs) => ∃ j ≤ cs.length,
+          rs.length = cs.length ∧
+          repliesMatch (rs.take j) ((runPick pick s0 cs).2.take j) = true ∧
+          (∀ r ∈ rs.drop j, r.isIOError = true) ∧
+          (logState c1 = some (runPick pick s0 (cs.take j)).1 ∨
+            (j < cs.length ∧ logState c1 = some (runPick pick s0 (cs.take (j + 1))).1))) :
+    AppOutcome dec mstep pick s0 cs o c1 := by
+  unfold AppOutcome
+  cases o with
+  | error r => exact hk
+  | ok p =>
+    obtain ⟨_, rs⟩ := p
+    obtain ⟨j, hj, hl, hm, hio, hc⟩ := hk
+    refine ⟨j, hj, hl, hm, hio, ?_⟩
+    rcases hc with e | ⟨hjl, e⟩
+    · exact ⟨_, e, Or.inl (runPick_model hr _ hw0)⟩
+    · exact ⟨_, e, Or.inr ⟨hjl, runPick_model hr _ hw0⟩⟩
+
+/-- **App-level crash consistency.** For any app whose `pickI` implements `pick` (`PickOk`) and
+whose `pick` refines its model (`Refines`): open the store on a healthy log, run app commands
+under any I/O faults, and crash in any allowed way. The recovered log decodes to the app model
+after exactly the acknowledged commands, possibly plus the one in flight. -/
+theorem app_crash_consistent {σ C : Type} {dec : Store → σ} {mstep : σ → C → σ}
+    {pickI : Tree → C → Cmd ByteArray} {pick : Store → C → Cmd Bytes}
+    (hp : PickOk pickI pick) (hr : Refines dec mstep pick) {c0 : Bytes} {s0 : Store}
+    (hs0 : logState c0 = some s0) (cs : List C) (φ : List Fault) (ch : CrashChoice) :
+    let out := (do
+        match ← (Core.openStore : FsM _) with
+        | .error r => pure (Except.error r)
+        | .ok h => Except.ok <$> Core.execPick pickI h cs : FsM _).run (startState c0 φ)
+    AppOutcome dec mstep pick s0 cs out.1 (crashOutcome out.2.disk ch) := by
+  intro out
+  exact appOutcome_of hr (logState_wellFormed hs0) cs out.1 (crashOutcome out.2.disk ch)
+    (substrate_crash_consistent hp hs0 cs φ ch)
+
 end LeanKV.Proofs

@@ -1,4 +1,5 @@
 import AppName.Spec.Model
+import AppName.Spec.Properties
 import AppName.Spec.Contract
 import MakeItLean.Gates
 

@@ -9,4 +9,6 @@ def usesHole : Nat := hole + 1
 theorem obligation : hole = hole := sorry
 /-- English: A spec theorem left open (forbidden). -/
 theorem notAnObligation : 1 + 1 = 2 := sorry
+/-- English: A spec claim that names the hole only to escape proof (the contract gate's bait). -/
+theorem smuggled (_ : hole = hole) : 2 + 2 = 4 := sorry
 end BaitSpec

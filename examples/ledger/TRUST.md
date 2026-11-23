@@ -32,8 +32,8 @@ half of them SIGKILLed). **Trusted** means neither.
 | R13 | Conservation; total = deposits − withdrawals | Proven | `cstep_total`, `transfer_conserves`, `lrun_total`, `reachable_total`; also checked in `kill_test.py` |
 | Layout (§6) | The store stands for the model ledger | Proven | `decodeBal_u64le`, `dec_insert`, `bal_dec`, `pickRef_refines` (every store), `kvRun_refines` |
 | Implementation | Fast `pick` = reference `pickRef` | Proven, comparator ACCEPTED | `LedgerImpl.pick_ok` (fills `impl_pick_ok`), `look_eq` (balanced-tree lookup = reference lookup) |
-| R15 | Acknowledged commands persist | Proven (via LeanKV), tested | `LedgerImpl.pickOk` makes LeanKV's `substrate_crash_consistent` / `substrate_no_faults` apply to Ledger; `runPick_refines` maps the stored state to `lrun`. kill_test: every acknowledged command is visible afterwards |
-| R16 | After a crash: acknowledged prefix, plus maybe the in-flight command, never half a transfer | Proven (via LeanKV), tested | Same chain: `substrate_crash_consistent pickOk` says the log stands for `runPick ledgerPick s0 (cs.take j)` or `(cs.take (j+1))`; `runPick_refines` says that store decodes to the model ledger after those commands. kill_test: 280 kills, 17 applied before the kill, none half-applied |
+| R15 | Acknowledged commands persist | Proven on LeanKV's model file system (one theorem), tested | `LedgerImpl.crash_consistent` (= LeanKV's `app_crash_consistent` with `pickOk` and `refines`; pinned to the frozen `dec`/`cstep`/`pickRef` in `impl/audit.lean`). Also `substrate_no_faults`, `runPick_refines`. kill_test: every acknowledged command is visible afterwards |
+| R16 | After a crash: acknowledged prefix, plus maybe the in-flight command, never half a transfer | Proven on LeanKV's model file system (one theorem), tested | `LedgerImpl.crash_consistent`: after any faults and any crash, the recovered log decodes to the Ledger model after exactly the acknowledged commands, possibly plus the one in flight (`AppOutcome`). kill_test: 280 kills, 17 applied before the kill, none half-applied |
 | R17 | Torn tail cut silently; corruption refuses (exit 3) without changing the file | Proven in LeanKV (recovery); tested here | LeanKV's recovery theorems (`examples/kvstore/TRUST.md`); cli_test: a damaged first record gives `ERR CORRUPT`, exit 3, file unchanged; a torn last record is dropped |
 | R14 | CLI grammar, answer lines, exit codes 0–4 | Tested | cli_test (all commands, all error codes, exit codes 0/1/2/3/4) |
 
@@ -47,11 +47,12 @@ half of them SIGKILLed). **Trusted** means neither.
    unproven: the shell calls `cstep` on the right pre-state, prints the answer only after the write
    succeeded, and maps an I/O reply to `ERR IO`. There is no end-to-end proof of the shell. It is
    covered by tests only.
-2. **The composition of the link theorems.** Each link is proven: `pickOk` gives
-   `substrate_crash_consistent` for Ledger, `runPick_refines` and `kvRun_refines` move from the
-   store to the model, and `reachable_*` give R12 and R13 on that model. No single Lean theorem
-   states "the real ledger directory after a crash equals `lrun` of the acknowledged commands".
-   That last step of composition is checked by hand, not by Lean.
+2. **~~The composition of the link theorems.~~ Closed after the exit test (2026-11-22, framework
+   fix, not the building agent's work).** `LedgerImpl.crash_consistent` is one kernel-checked
+   theorem: LeanKV's new `app_crash_consistent` applied to `pickOk` and `refines`. `impl/audit.lean`
+   pins both facts to the frozen spec's `dec`, `cstep` and `pickRef`. Remaining limits: it is checked
+   by `mil audit` (kernel, standard axioms), not by the comparator, because a spec package cannot
+   import the substrate; and it holds on LeanKV's model file system, so real files rest on item 3.
 3. **LeanKV's own trust base** (`examples/kvstore/TRUST.md`). This is the model file system and
    crash model, the C file layer (`lkv_io.c`), and `fsync` and the operating system.
 4. **The Lean compiler and runtime.** This includes `Nat` arithmetic on large numbers and the

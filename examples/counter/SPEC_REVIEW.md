@@ -184,5 +184,100 @@ Counter.Spec.pickRef_refines {st : LeanKV.Spec.Store} (hw : st.WellFormed) (c : 
     (Counter.Spec.cstep (Counter.Spec.dec st) c).fst
 ```
 
+## `Counter.Spec.Properties`
+
+### `Counter.Spec.crun`
+
+Run commands from a state with the reference model: the final state and every answer.
+
+```lean
+Counter.Spec.crun (s : Counter.Spec.CState) :
+  List (Counter.Spec.CCmd LeanKV.Spec.Bytes) → Counter.Spec.CState × List Counter.Spec.CResp
+```
+
+### `Counter.Spec.CState.empty`
+
+The empty state: every counter is 0.
+
+```lean
+Counter.Spec.CState.empty : Counter.Spec.CState
+```
+
+### `Counter.Spec.get_unchanged_model`
+
+Reading a counter changes nothing.
+
+*Status:* Proven
+
+```lean
+Counter.Spec.get_unchanged_model (s : Counter.Spec.CState) (n : LeanKV.Spec.Bytes) :
+  (Counter.Spec.cstep s (Counter.Spec.CCmd.get n)).fst = s
+```
+
+### `Counter.Spec.incr_answers`
+
+An increment of a valid counter below the maximum answers the old value plus one.
+
+*Status:* Proven
+
+```lean
+Counter.Spec.incr_answers (s : Counter.Spec.CState) (n : LeanKV.Spec.Bytes) (hv : Counter.Spec.validName n = true)
+  (hm : s n < Counter.Spec.maxCount) :
+  (Counter.Spec.cstep s (Counter.Spec.CCmd.incr n)).snd = Counter.Spec.CResp.value (s n + 1)
+```
+
+### `Counter.Spec.cstep_bounded`
+
+A step keeps every counter at most the maximum.
+
+*Status:* Proven
+
+```lean
+Counter.Spec.cstep_bounded {s : Counter.Spec.CState} (hs : ∀ (m : LeanKV.Spec.Bytes), s m ≤ Counter.Spec.maxCount)
+  (c : Counter.Spec.CCmd LeanKV.Spec.Bytes) (m : LeanKV.Spec.Bytes) :
+  (Counter.Spec.cstep s c).fst m ≤ Counter.Spec.maxCount
+```
+
+### `Counter.Spec.reachable_bounded`
+
+Every counter reachable from the empty state is at most the maximum.
+
+*Status:* Proven
+
+```lean
+Counter.Spec.reachable_bounded (cs : List (Counter.Spec.CCmd LeanKV.Spec.Bytes)) (m : LeanKV.Spec.Bytes) :
+  (Counter.Spec.crun Counter.Spec.CState.empty cs).fst m ≤ Counter.Spec.maxCount
+```
+
+### `Counter.Spec.nm`
+
+The bytes of a text (ASCII names in the examples).
+
+```lean
+Counter.Spec.nm (s : String) : LeanKV.Spec.Bytes
+```
+
 ---
-Theorems proven: 2. Obligations for the implementation: 1. Holes: 1.
+Theorems proven: 6. Obligations for the implementation: 1. Holes: 1.
+
+## Executable examples (`#guard`, checked at build time)
+
+### `Counter/Spec/Properties.lean`
+
+```lean
+-- incr, incr, get on one counter; another counter is untouched.
+#guard (crun CState.empty [.incr (nm "a"), .incr (nm "a"), .get (nm "a"), .get (nm "b")]).2 ==
+  [.value 1, .value 2, .value 2, .value 0]
+-- Names of 0 and 65 bytes are refused; 64 bytes is fine.
+#guard (cstep CState.empty (.incr [])).2 == .error
+#guard (cstep CState.empty (.incr (List.replicate 65 0x61))).2 == .error
+#guard (cstep CState.empty (.incr (List.replicate 64 0x61))).2 == .value 1
+-- At the maximum, an increment is refused and changes nothing.
+#guard (cstep (fun _ => maxCount) (.incr (nm "a"))).2 == .error
+-- The stored layout: a counter written through LeanKV reads back as the model's value.
+#guard dec (step [] (pickRef [] (.incr (nm "a")))).1 (nm "a") == 1
+```
+
+## Spec critic
+
+No `SpecCritic/` directory: the spec critic's checks are missing.

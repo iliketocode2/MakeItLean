@@ -1,0 +1,8 @@
+{
+  "holes": {
+    "Counter.Spec.Impl.pick": "CounterImpl.pick"
+  },
+  "obligations": {
+    "Counter.Spec.impl_pick_ok": "CounterImpl.pick_ok t c hw"
+  }
+}

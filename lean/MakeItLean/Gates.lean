@@ -105,7 +105,7 @@ elab "#assert_spec_axioms " pfx:ident : command => do
   let mut n := 0
   for (nm, ci) in constantsUnder env pfx.getId do
     unless ci matches .thmInfo _ do continue
-    n := n + 1
+    if isUserFacing env nm then n := n + 1  -- report the app's own theorems, not generated lemmas
     let isObligation := ci.type.getUsedConstants.any holes.contains
     if isObligation then obligations := obligations.push nm
     let axs ← liftCoreM (collectAxioms nm)
@@ -115,6 +115,71 @@ elab "#assert_spec_axioms " pfx:ident : command => do
   if bad.isEmpty then
     logInfo m!"Spec-axiom gate: OK ({n} theorems; {obligations.size} obligations open)"
   else throwError m!"Spec-axiom gate: {(bad.qsort (· < ·)).toList}"
+
+syntax (name := assertContract) "#assert_contract " ident " (" ident* ")" " (" ident* ")" : command
+
+/-- `#assert_contract Pfx (H…) (O…)`: the implementation holes under `Pfx` are
+exactly `H…`, and the theorems whose statement names a hole (the obligations) are exactly `O…`.
+`mil` runs this with the names in `mil.json`, so a theorem cannot dodge proof by mentioning a hole
+while being left out of the list the comparator checks. -/
+@[command_elab assertContract] def elabAssertContract : CommandElab := fun stx => do
+  let pfx := stx[1].getId
+  let declHoles := stx[3].getArgs.map (·.getId)
+  let declObls := stx[6].getArgs.map (·.getId)
+  let env ← getEnv
+  let holes ← holeNames pfx
+  let mut obls := #[]
+  for (n, ci) in constantsUnder env pfx do
+    if ci matches .thmInfo _ && ci.type.getUsedConstants.any holes.contains then obls := obls.push n
+  let diff (a b : Array Name) := (a.filter (!b.contains ·)).qsort Name.lt |>.toList
+  let mut bad := #[]
+  for n in diff holes declHoles do bad := bad.push s!"hole {n} is not listed in mil.json"
+  for n in diff declHoles holes do bad := bad.push s!"mil.json lists {n}, which is not an implementation hole"
+  for n in diff obls declObls do bad := bad.push s!"theorem {n} names a hole but is not a listed obligation (the comparator would never check it)"
+  for n in diff declObls obls do bad := bad.push s!"mil.json lists {n}, which is not a theorem naming a hole"
+  if bad.isEmpty then logInfo m!"Contract gate: OK ({holes.size} holes, {obls.size} obligations, matching mil.json)"
+  else throwError m!"Contract gate FAILED:\n{"\n".intercalate bad.toList}"
+
+/-- Does `tok` look like a Lean name rather than prose, a command or a file? It is an identifier
+with an underscore, an inner capital (`pickOk`) or a dot path (`LedgerImpl.pick`). -/
+def looksLikeLeanName (tok : String) : Bool :=
+  let cs := tok.toList
+  let identChar (c : Char) := c.isAlphanum || c == '_' || c == '.' || c == '\'' || c == '!' || c == '?'
+  let exts := [".lean", ".md", ".c", ".h", ".sh", ".py", ".json", ".log", ".lock", ".txt"]
+  match cs with
+  | [] => false
+  | c :: _ =>
+    let keywords := ["implemented_by", "native_decide", "bv_decide", "extern", "partial_fixpoint"]
+    (c.isAlpha || c == '_') && cs.all identChar && !exts.any (tok.endsWith ·) &&
+    !keywords.contains tok && cs.any Char.isLower &&  -- skip error codes like `BAD_NAME`
+    (cs.contains '_' || cs.contains '.' ||
+      (cs.zip cs.tail).any (fun (a, b) => a.isLower && b.isUpper))
+
+/-- The `code spans` of a Markdown text. -/
+def codeSpans (s : String) : List String :=
+  (s.splitOn "`").zipIdx.filterMap fun (t, i) => if i % 2 == 1 then some t else none
+
+/-- `#assert_trust_cites "TRUST.md" "appDir"`: every name in a code span of the trust manifest that
+looks like a Lean name exists in the environment (as a full name or a namespace suffix), unless
+it names a file in the app directory (`cli_test` for `tests/cli_test.sh`). A trust manifest that
+cites a theorem that does not exist is claiming a proof nobody has. -/
+elab "#assert_trust_cites " path:str dir:str : command => do
+  let env ← getEnv
+  unless ← System.FilePath.pathExists path.getString do
+    throwError "Trust gate: {path.getString} does not exist (Stage 6 requires a trust manifest)"
+  let text ← IO.FS.readFile path.getString
+  let mut files : Std.HashSet String := {}
+  for f in ← (System.FilePath.mk dir.getString).walkDir (fun p => pure (p.fileName != some ".lake")) do
+    if let some stem := f.fileStem then files := files.insert stem
+  let mut suffixes : Std.HashSet String := {}
+  for (n, _) in env.constants.toList do
+    let comps := n.components.map toString
+    for i in [0:comps.length] do suffixes := suffixes.insert (".".intercalate (comps.drop i))
+  for m in env.header.moduleNames do suffixes := suffixes.insert m.toString
+  let toks := (codeSpans text).filter looksLikeLeanName |>.eraseDups
+  let missing := toks.filter fun t => !suffixes.contains t && !files.contains t
+  if missing.isEmpty then logInfo m!"Trust gate: OK ({toks.length} cited names exist)"
+  else throwError m!"Trust gate: {path.getString} cites names that do not exist: {missing}"
 
 syntax (name := auditVerified) "#audit_verified " (ident)+ " forbid_imports " ident : command
 

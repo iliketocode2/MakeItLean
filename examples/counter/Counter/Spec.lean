@@ -1,4 +1,5 @@
 import Counter.Spec.Model
+import Counter.Spec.Properties
 import Counter.Spec.Contract
 import MakeItLean.Gates
 

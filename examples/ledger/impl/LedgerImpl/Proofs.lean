@@ -62,4 +62,23 @@ theorem runPick_refines (cs : List (LCmd ByteArray)) {s0 : Store} {s : LState} (
     dec (runPick ledgerPick s0 cs).1 = (lrun s (cs.map (LCmd.map toBytes))).1 := by
   rw [runPick_eq_kvRun]; exact kvRun_refines _ h
 
+/-- The model step on implementation commands: `cstep`'s new ledger. -/
+def ledgerStep (s : LState) (c : LCmd ByteArray) : LState := (cstep s (c.map toBytes)).1
+
+/-- The reference translation refines the Ledger model (from the frozen `pickRef_refines`). -/
+theorem refines : Refines dec ledgerStep ledgerPick := fun st c _ => pickRef_refines st _
+
+/-- **Ledger crash consistency (R15–R16), end to end.** Open a store whose log stands for `s0`,
+run Ledger commands through the real `pick` under any I/O faults, and crash in any allowed way:
+the recovered log decodes to the Ledger model after exactly the acknowledged commands, possibly
+plus the one in flight (`AppOutcome`). One kernel-checked theorem; no composition by hand. -/
+theorem crash_consistent {c0 : Bytes} {s0 : Store} (hs0 : logState c0 = some s0)
+    (cs : List (LCmd ByteArray)) (φ : List Fault) (ch : CrashChoice) :
+    let out := (do
+        match ← (LeanKV.Core.openStore : FsM _) with
+        | .error r => pure (Except.error r)
+        | .ok h => Except.ok <$> LeanKV.Core.execPick pick h cs : FsM _).run (startState c0 φ)
+    AppOutcome dec ledgerStep ledgerPick s0 cs out.1 (crashOutcome out.2.disk ch) :=
+  app_crash_consistent pickOk refines hs0 cs φ ch
+
 end LedgerImpl
