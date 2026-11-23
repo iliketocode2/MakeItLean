@@ -13,7 +13,11 @@ planted violations, or starts rejecting the well-formed spec. -/
 /-- error: Hole gate: definitions use implementation holes: [(BaitSpec.usesHole, [BaitSpec.hole])] -/
 #guard_msgs in #assert_holes_only_in_theorems MakeItLeanTest.Bait.Spec
 
-/-- error: Spec-axiom gate: [BaitSpec.notAnObligation uses sorryAx] -/
+/--
+error: Spec-axiom gate: [BaitSpec.notAnObligation uses sorryAx,
+ BaitSpec.unwritten uses sorryAx,
+ BaitSpec.usesHole uses sorryAx]
+-/
 #guard_msgs in #assert_spec_axioms MakeItLeanTest.Bait.Spec
 
 /-- info: English-doc gate: OK for modules under MakeItLeanTest.Bait.Good -/

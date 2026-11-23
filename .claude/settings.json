@@ -17,6 +17,17 @@
             "statusMessage": "Checking agent role permissions"
           }
         ]
+      },
+      {
+        "matcher": "Read|Grep|Glob|Bash|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"$CLAUDE_PROJECT_DIR/tools/hooks/guard_read.py\"",
+            "timeout": 20,
+            "statusMessage": "Checking hidden benchmark files"
+          }
+        ]
       }
     ]
   }

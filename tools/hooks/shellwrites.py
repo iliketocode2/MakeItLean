@@ -51,6 +51,28 @@ def tokens(cmd):
         return None
 
 
+ENV_PASS = ("HOME", "TMPDIR", "PWD", "USER")
+VAR = re.compile(r"\$(?:\{(\w+)\}|(\w+))")
+ASSIGN = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+
+
+def expand(tok, env):
+    """`tok` with `$VAR`/`${VAR}` replaced from variables set earlier in the command (`env`) or a
+    few safe environment variables; None if a variable is unknown (the path cannot be known, so
+    it is not guessed; `mil check-lock` remains the detector)."""
+    def sub(m):
+        name = m.group(1) or m.group(2)
+        if name in env:
+            return env[name]
+        if name in ENV_PASS and name in os.environ:
+            return os.environ[name]
+        raise KeyError(name)
+    try:
+        return VAR.sub(sub, tok)
+    except KeyError:
+        return None
+
+
 def resolve(path, cwd):
     path = os.path.expanduser(path)
     return os.path.realpath(path if os.path.isabs(path) else os.path.join(cwd, path))
@@ -91,8 +113,21 @@ def write_targets(cmd, cwd):
             merged[-1] = "||"
         else:
             merged.append(t)
-    out, here = [], cwd
+    out, here, env = [], cwd, {}
+
+    def rv(p, base):
+        e = expand(p, env)
+        return resolve(e, base) if e else None
+
     for seg in segments(merged):
+        if seg and all(ASSIGN.match(w) for w in seg if w != "export"):
+            for w in seg:
+                m = ASSIGN.match(w)
+                if m:
+                    v = expand(m.group(2), env)
+                    if v is not None:
+                        env[m.group(1)] = v
+            continue
         words, k = [], 0
         while k < len(seg):
             t = seg[k]
@@ -101,7 +136,7 @@ def write_targets(cmd, cwd):
                 if target.startswith("&"):           # >&2 written as '>' '&2'
                     pass
                 elif target and target != "/dev/null":
-                    out.append(resolve(target, here))
+                    out.append(rv(target, here))
                 k += 2
                 continue
             if t.startswith(">&") or re.match(r"^\d*>&\d+$", t) or t == "<" or t.startswith("<<"):
@@ -119,11 +154,11 @@ def write_targets(cmd, cwd):
         prog, args = os.path.basename(words[0]), words[1:]
         operands = [a for a in args if not a.startswith("-")]
         if prog == "cd":
-            here = resolve(operands[0], here) if operands else os.path.expanduser("~")
+            here = rv(operands[0], here) if operands else os.path.expanduser("~")
         elif prog == "pushd" and operands:
-            here = resolve(operands[0], here)
+            here = rv(operands[0], here)
         elif prog == "tee":
-            out += [resolve(a, here) for a in operands]
+            out += [rv(a, here) for a in operands]
         elif prog in ("sed", "perl") and any(a.startswith("-i") or a.startswith("--in-place") for a in args):
             # files are the operands after the script (sed: first operand unless -e/-f given)
             ops = operands
@@ -131,21 +166,21 @@ def write_targets(cmd, cwd):
                 ops = ops[1:]
             if prog == "perl":
                 ops = [a for a in ops if not a.startswith("s/")]
-            out += [resolve(a, here) for a in ops]
+            out += [rv(a, here) for a in ops]
         elif prog == "mv":
-            out += [resolve(a, here) for a in operands]
+            out += [rv(a, here) for a in operands]
         elif prog in DEST_WRITERS and operands:
-            out.append(resolve(operands[-1], here))
+            out.append(rv(operands[-1], here))
         elif prog in OPERAND_WRITERS:
-            out += [resolve(a, here) for a in operands]
+            out += [rv(a, here) for a in operands]
         elif prog == "dd":
-            out += [resolve(a[3:], here) for a in args if a.startswith("of=")]
+            out += [rv(a[3:], here) for a in args if a.startswith("of=")]
         elif prog == "git" and args[:1] and args[0] in ("checkout", "restore", "rm", "mv", "apply"):
             if "--" in args:
-                out += [resolve(a, here) for a in args[args.index("--") + 1:]]
+                out += [rv(a, here) for a in args[args.index("--") + 1:]]
             elif args[0] in ("rm", "mv"):
-                out += [resolve(a, here) for a in operands[1:]]
-    return out
+                out += [rv(a, here) for a in operands[1:]]
+    return [p for p in out if p]
 
 
 def touches(target, path):

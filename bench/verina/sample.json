@@ -1,0 +1,40 @@
+{
+ "seed": 20261123,
+ "rule": "17 basic + 13 advanced, random.Random(seed).sample over sorted eligible lists",
+ "sample": [
+  "verina_basic_101",
+  "verina_basic_108",
+  "verina_basic_12",
+  "verina_basic_13",
+  "verina_basic_15",
+  "verina_basic_22",
+  "verina_basic_25",
+  "verina_basic_26",
+  "verina_basic_38",
+  "verina_basic_54",
+  "verina_basic_55",
+  "verina_basic_60",
+  "verina_basic_73",
+  "verina_basic_8",
+  "verina_basic_81",
+  "verina_basic_83",
+  "verina_basic_95",
+  "verina_advanced_12",
+  "verina_advanced_15",
+  "verina_advanced_18",
+  "verina_advanced_31",
+  "verina_advanced_32",
+  "verina_advanced_34",
+  "verina_advanced_35",
+  "verina_advanced_45",
+  "verina_advanced_46",
+  "verina_advanced_57",
+  "verina_advanced_64",
+  "verina_advanced_75",
+  "verina_advanced_76"
+ ],
+ "timing_tasks_outside_sample": [
+  "verina_basic_44",
+  "verina_advanced_3"
+ ]
+}

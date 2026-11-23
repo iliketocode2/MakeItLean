@@ -109,10 +109,44 @@ minutes a task" stop does not apply. Consequences for A1–A2:
   whose reference spec builds on 4.36 without Mathlib and whose every spec check `decide` settles
   (so every score of an agent's spec is definite). `decide` fully settles the reference
   postcondition in 109 / 122 fully built references, which is why Plausible is not needed.
-- **Still to do in A1:** the converter (task → `mil init --pure` app: description and signature as
-  the requirements, contract generated from the signature, precondition and postcondition left to
-  the spec author; the reference held out), a **read guard** so role agents cannot open
-  `~/bench/verina` (it holds the reference solutions and tests), and the one-task timing run per arm.
+- **Converter, done:** `bench/verina/convert.py framework|baseline TASK OUT`. Framework: a
+  `mil init --pure` app with the description and signature as `REQUIREMENTS.md` (status: approved by
+  the benchmark protocol; the hard stops stated), the contract generated from the signature, and
+  the precondition, postcondition, function and proof left as marked stubs for the roles.
+  Baseline: one `Solution.lean` in VERINA's layout with the same requirements. Neither arm gets
+  the reference or the tests; signature text is checked against a whitelist before any Lean is
+  generated from it. Run directories live in `bench/verina/runs/` (git-ignored).
+- **Read guard, done:** `tools/hooks/guard_read.py`: any subagent is blocked from reading,
+  searching, listing or running a command on `~/bench` (the dataset), and from looking VERINA up
+  on the web; the main session (the scorer's side) is not. Verified live and in `test_guards.py`.
+- **Sample, fixed before any run:** `bench/verina/sample.json`: seed 20261123, 17 basic + 13
+  advanced from the eligible pool. Timing tasks drawn from outside it: `verina_basic_44`
+  (used) and `verina_advanced_3` (spare).
+- **Framework fixes found by the timing run:** (1) the role guard knew apps only under
+  `examples/`, so every role was blocked in `bench/` (it now finds an app by its `mil.json`; the
+  shell parser now follows `VAR=…` assignments and `$HOME`, and skips unknown variables);
+  (2) `#assert_spec_axioms` ignored spec *definitions*, so a precondition or postcondition left as
+  `sorry` passed the gates (it now fails them; negative test); (3) the pure template's generated
+  solution was a default build target, so `lake build` failed during Stage 3 (no longer default).
+
+### A1 timing run (2026-11-23): `verina_basic_44`, outside the sample
+| Arm / role | Tokens | Tool calls | Wall time | Result |
+|---|---|---|---|---|
+| Baseline (one agent) | 41,797 | 3 | 24 s | builds; standard axioms only; 28/28 checks pass |
+| Spec author | 49,814 | 5 | 76 s | gates pass; 26 worked examples (run resumed once after a usage limit) |
+| Spec critic | 52,787 | 6 | 57 s | 15 planted wrong implementations, all rejected; no gap |
+| (orchestrator) freeze | — | — | — | signed `benchmark-protocol-no-user-signoff` |
+| Implementer | 58,595 | 9 | 62 s | tested by evaluation on 400 arrays |
+| Prover | 56,014 | 5 | 28 s | `mil judge` ACCEPTED (re-run by the orchestrator) |
+| **Framework total** | **217,210** | 25 | 223 s | 28/28 checks pass |
+
+Not counted above (friction): the first spec-author attempt, blocked by the guard bug, 59,715
+tokens and 61 s. Orchestrator tokens (relaying, verifying, scoring) are not in the subagent counts.
+
+**Reading.** On an easy task both arms are fully correct, so there is no signal about quality yet:
+that needs harder tasks. The framework costs about **5× the tokens and 9× the wall time** of the
+baseline here. Each agent carries roughly 40k tokens of fixed context (system prompt, AGENTS.md),
+so a four-role run is dominated by that fixed cost on small tasks.
 
 ## Experiment B: another agent through AGENTS.md
 - **Task:** the same as Phase 2's exit test (a fresh app from a one-paragraph brief, two user

@@ -11,4 +11,6 @@ theorem obligation : hole = hole := sorry
 theorem notAnObligation : 1 + 1 = 2 := sorry
 /-- English: A spec claim that names the hole only to escape proof (the contract gate's bait). -/
 theorem smuggled (_ : hole = hole) : 2 + 2 = 4 := sorry
+/-- English: A spec definition left unwritten (forbidden). -/
+def unwritten : Nat := sorry
 end BaitSpec

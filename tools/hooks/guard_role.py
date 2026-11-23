@@ -5,7 +5,8 @@ The role is the subagent's name, which Claude Code passes to hooks as `agent_typ
 (`.claude/agents/mil-*.md`). Calls from any other agent, or from the main session, are not
 restricted here (the frozen-file guard, `guard_locked.py`, still applies to everyone).
 
-Paths are judged relative to an app directory `examples/<app>/`:
+Paths are judged relative to their app: the nearest enclosing directory with a `mil.json`
+(`examples/<app>/`, `bench/verina/runs/…/<app>/`; never `templates/`):
 
   spec area   REQUIREMENTS.md, mil.json, <App>/Spec.lean, <App>/Spec/**     (spec author)
   critic      <App>/SpecCritic/**                                            (spec critic)
@@ -45,12 +46,25 @@ def repo_root(start):
         d = parent
 
 
-def area(rel):
-    """The area of a repository-relative path, or None if it is outside every app."""
-    parts = rel.split(os.sep)
-    if len(parts) < 3 or parts[0] != "examples" or parts[1] == "kvstore":
+def app_root(full, root):
+    """The app holding `full`: its nearest enclosing directory with a `mil.json`, inside the
+    repository but not under `templates/` (examples/<app>/, bench/verina/runs/…/<app>/, …).
+    None when the path belongs to no app (the framework, LeanKV, templates, docs)."""
+    d = full if os.path.isdir(full) else os.path.dirname(full)
+    while d.startswith(root + "/"):
+        if os.path.isfile(os.path.join(d, "mil.json")):
+            rel = os.path.relpath(d, root)
+            return None if rel.split(os.sep)[0] == "templates" else d
+        d = os.path.dirname(d)
+    return None
+
+
+def area(full, root):
+    """The area of an absolute path inside the repository `root`, or None outside every app."""
+    app = app_root(full, root)
+    if app is None:
         return None
-    sub = parts[2:]
+    sub = os.path.relpath(full, app).split(os.sep)
     name = sub[-1]
     if sub == ["FRICTION.md"]:
         return "everyone"
@@ -95,7 +109,7 @@ def check_path(role, cwd, p):
     if root is None:
         return  # outside any MakeItLean repository (scratch space)
     rel = os.path.relpath(full, root)
-    a = area(rel)
+    a = area(full, os.path.realpath(root))
     if a is None:
         deny(role, rel, "is framework or substrate code, outside every app")
     if a == "tool":

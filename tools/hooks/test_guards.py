@@ -72,6 +72,38 @@ def remove_stale():
     subprocess.run(["git", "-C", M, "worktree", "prune"], check=False)
 
 
+def bench_app_cases(app):
+    """An app outside examples/ (found by its mil.json), shell variables, and templates/."""
+    out = []
+    R = lambda role, tool, inp, want, d: out.append(("guard_role.py", {"agent_type": role, "tool_name": tool, "cwd": M, "tool_input": inp}, want, f"bench app: {role} {d}"))
+    R("mil-spec-author", "Write", {"file_path": f"{app}/Zt/Spec/Model.lean"}, 0, "writes the spec of an app under bench/ (was blocked)")
+    R("mil-spec-author", "Write", {"file_path": f"{app}/FRICTION.md"}, 0, "writes the bench app's FRICTION.md")
+    R("mil-implementer", "Write", {"file_path": f"{app}/Zt/Spec/Model.lean"}, 2, "writes the bench app's spec")
+    R("mil-prover", "Write", {"file_path": f"{app}/impl/ZtImpl/Proofs.lean"}, 0, "writes the bench app's proofs")
+    R("mil-spec-author", "Bash", {"command": "S=/tmp/scratch-x; mkdir -p $S; echo x > $S/Draft.lean"}, 0, "writes a scratch file through a shell variable (was blocked)")
+    R("mil-spec-author", "Bash", {"command": f"F={app}/impl/ZtImpl/Core.lean; echo x > $F"}, 2, "writes another role's file through a shell variable")
+    R("mil-spec-author", "Write", {"file_path": f"{M}/templates/pure/AppName/Spec/Model.lean"}, 2, "writes the template (framework, despite its mil.json)")
+    return out
+
+
+def read_cases():
+    """guard_read.py: subagents cannot see the hidden benchmark directory (MIL_PROTECTED_READS)."""
+    B = os.path.realpath(os.path.expanduser("~/bench"))
+    out = []
+    G = lambda payload, want, d: out.append(("guard_read.py", payload, want, f"read guard: {d}"))
+    sub = {"agent_type": "mil-implementer", "cwd": M}
+    G({**sub, "tool_name": "Read", "tool_input": {"file_path": f"{B}/verina/datasets/verina/x/task.lean"}}, 2, "subagent reads a reference file")
+    G({**sub, "tool_name": "Grep", "tool_input": {"pattern": "postcond", "path": f"{B}/verina"}}, 2, "subagent greps the dataset")
+    G({**sub, "tool_name": "Glob", "tool_input": {"pattern": "~/bench/**/*.lean"}}, 2, "subagent globs the dataset")
+    G({**sub, "tool_name": "Bash", "tool_input": {"command": "cat ~/bench/verina/datasets/verina/x/test.json"}}, 2, "subagent cats a test file")
+    G({**sub, "tool_name": "Bash", "tool_input": {"command": "git clone https://github.com/sunblaze-ucb/verina /tmp/v"}}, 2, "subagent clones the benchmark")
+    G({**sub, "tool_name": "WebSearch", "tool_input": {"query": "verina isOddAtIndexOdd solution"}}, 2, "subagent searches the web for it")
+    G({**sub, "tool_name": "Read", "tool_input": {"file_path": f"{M}/bench/verina/runs/x/REQUIREMENTS.md"}}, 0, "subagent reads its own run directory")
+    G({**sub, "tool_name": "Bash", "tool_input": {"command": "lake build 2>&1 | tail -1"}}, 0, "subagent builds")
+    G({"cwd": M, "tool_name": "Read", "tool_input": {"file_path": f"{B}/verina/datasets/verina/x/task.lean"}}, 0, "main session reads the dataset (the scorer's side)")
+    return out
+
+
 def main():
     # a cancelled run (SIGTERM, e.g. a CI timeout) still cleans up: turn it into a normal exit
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
@@ -80,7 +112,10 @@ def main():
     wt = os.path.join(M, ".claude", "worktrees", f"guardtest-{os.getpid()}")
     subprocess.run(["git", "-C", M, "worktree", "add", "-q", "--detach", wt, "HEAD"], check=True)
     try:
-        all_cases = cases(M, "main") + cases(wt, "worktree")
+        app = os.path.join(M, "bench", f"zguardapp-{os.getpid()}")
+        os.makedirs(app, exist_ok=True)
+        open(os.path.join(app, "mil.json"), "w").write("{}\n")
+        all_cases = cases(M, "main") + cases(wt, "worktree") + read_cases() + bench_app_cases(app)
         fails = 0
         for name, payload, want, desc in all_cases:
             rc = hook(name, payload)
@@ -91,6 +126,8 @@ def main():
         sys.exit(1 if fails else 0)
     finally:
         subprocess.run(["git", "-C", M, "worktree", "remove", "--force", wt], check=False)
+        import shutil
+        shutil.rmtree(os.path.join(M, "bench", f"zguardapp-{os.getpid()}"), ignore_errors=True)
 
 
 if __name__ == "__main__":

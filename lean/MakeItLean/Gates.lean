@@ -95,8 +95,8 @@ elab "#assert_holes_only_in_theorems " pfx:ident : command => do
 def standardAxioms : List Name := [``propext, ``Quot.sound, ``Classical.choice]
 
 /-- `#assert_spec_axioms Pfx`: theorems whose *statement* names a hole are the implementation's
-obligations and may be open (`sorry`); every other theorem must be proven with only `propext`,
-`Quot.sound`, `Classical.choice`. -/
+obligations and may be open (`sorry`); every other theorem must be proven, and every definition
+other than a hole must be complete, with only `propext`, `Quot.sound`, `Classical.choice`. -/
 elab "#assert_spec_axioms " pfx:ident : command => do
   let env ← getEnv
   let holes ← holeNames pfx.getId
@@ -104,6 +104,12 @@ elab "#assert_spec_axioms " pfx:ident : command => do
   let mut obligations := #[]
   let mut n := 0
   for (nm, ci) in constantsUnder env pfx.getId do
+    -- spec definitions (other than the holes) must be complete: a `sorry` in a precondition,
+    -- postcondition or model would otherwise pass the gates and only fail at the comparator
+    if ci matches .defnInfo _ && !holes.contains nm then
+      for a in ← liftCoreM (collectAxioms nm) do
+        unless standardAxioms.contains a do bad := bad.push s!"{nm} uses {a}"
+      continue
     unless ci matches .thmInfo _ do continue
     if isUserFacing env nm then n := n + 1  -- report the app's own theorems, not generated lemmas
     let isObligation := ci.type.getUsedConstants.any holes.contains
