@@ -88,6 +88,7 @@ MakeItLean/
 - Turn what the pilot needed into the library, the CLI, templates and agent instructions.
 - *Exit:* a **fresh agent session that uses only the framework** rebuilds a variant of the pilot, or a second small app, without my hand-holding.
 - Decided 2026-11-22: the exit app is a **double-entry bank ledger** (a new durable app), built by a fresh subagent in a git worktree. Plan: [PHASE2.md](PHASE2.md).
+- **Exit test passed 2026-11-22:** the subagent delivered `examples/ledger/` (AUDIT PASSED, re-run independently). Post-test framework fixes come before Phase 3; see [PHASE2.md](PHASE2.md).
 
 **Phase 3: hybrid and multi-agent.**
 - A second app with a non-Lean shell (for example, a TypeScript or Rust HTTP layer) checked by differential tests against the Lean model.

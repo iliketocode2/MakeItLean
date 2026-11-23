@@ -1,0 +1,10 @@
+{
+  "spec_module": "Ledger.Spec",
+  "hole_files": ["Ledger/Spec/Contract.lean"],
+  "impl_dir": "impl",
+  "solution_module": "LedgerSol.Holes",
+  "solution_imports": ["LedgerImpl.Proofs"],
+  "holes": { "Ledger.Spec.Impl.pick": "LedgerImpl.pick" },
+  "obligations": { "Ledger.Spec.impl_pick_ok": "LedgerImpl.pick_ok t c hw" },
+  "lock_files": ["Ledger/Spec.lean", "Ledger/Spec/Model.lean", "Ledger/Spec/Properties.lean", "Ledger/Spec/Contract.lean"]
+}

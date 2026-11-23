@@ -8,3 +8,4 @@ package makeitleanJudge
 
 require leankvImpl from "examples/kvstore/impl"
 require counterImpl from "examples/counter/impl"
+require ledgerImpl from "examples/ledger/impl"

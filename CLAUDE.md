@@ -3,7 +3,7 @@
 A framework that lets AI coding agents build applications **spec-first in Lean 4**. The code that runs is either proven against a frozen, human-approved spec, or differentially tested against a Lean reference model. Performance comes from **proof-licensed optimization**: fast paths that are proven equal to simple reference semantics.
 
 - Plan and decisions: `docs/PLAN.md`. Research and sources: `docs/RESEARCH.md`. Read both before making design changes.
-- Current status: **Phase 2 (framework extraction), exit test next.** Phase 1 (LeanKV pilot) is complete. Framework pieces: `lean/` (gates, review), `cli/` (`mil`), `templates/app/`, `agents/AGENTS.md`, `knowledge/`, the root judge workspace, and the LeanKV substrate (`substrate_crash_consistent`). Worked example: `examples/counter/` (mil audit passes). Plan and progress: `docs/PHASE2.md`.
+- Current status: **Phase 2 (framework extraction): exit test passed; post-test framework fixes next, then Phase 3.** Phase 1 (LeanKV pilot) is complete. Framework pieces: `lean/` (gates, review), `cli/` (`mil`), `templates/app/`, `agents/AGENTS.md`, `knowledge/`, the root judge workspace, and the LeanKV substrate (`substrate_crash_consistent`). Worked examples: `examples/counter/` and `examples/ledger/` (the exit-test app); mil audit passes on both. Plan and progress: `docs/PHASE2.md`.
 - **Building an app with the framework? Follow `agents/AGENTS.md`.**
 
 ## Environment

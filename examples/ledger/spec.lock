@@ -1,0 +1,8 @@
+# Frozen spec. Signed off by: ledger-v1
+582a63f8f9c5128067b688778c1051cf1464c3ca9d57b9325025c051c29b774a  lean-toolchain
+9ebb9a57fac866a85ab4a7f6acfd47910733c285b44c1389250fe87f1a0b15cb  lakefile.lean
+300e2ffdcca5a16b32e1e01ea677fc968faabe2596bf5d5bed7a61ba8fe2222b  mil.json
+b9ccf47120bd2060d2394db8a05cd26a8396360308cd9abb39770c09983283e2  Ledger/Spec.lean
+03a467fe2ad43c43cbc4c1dcdd9c3d76edd41da3f8402243bf353c02cbbe6eb9  Ledger/Spec/Model.lean
+826d23e3b584102c7c8d6ad7e24470e0c2bf57350d13b1bfd99d76ea5bc8d395  Ledger/Spec/Properties.lean
+e13d79d040d7fb98d744af5d6596007a830e9fbff98d5b1b7887ff5f3f0985fe  Ledger/Spec/Contract.lean
