@@ -55,9 +55,10 @@ if [ $QUICK -eq 0 ]; then
 
   step "8. A fresh app from the template: init, judge, tests, freeze, strict audit"
   APP="$ROOT/examples/ztemplatecheck"
+  PAPP="$ROOT/bench/ztemplatecheck/zpurecheck"   # deeper than examples/: exercises MIL_ROOT
   cp "$ROOT/lakefile.lean" "$ROOT/.lakefile.lean.bak"; cp "$ROOT/lake-manifest.json" "$ROOT/.lake-manifest.json.bak"
   restore() {
-    rm -rf "$APP" "$ROOT/judge/Ztemplatecheck_Spec.json"
+    rm -rf "$APP" "$ROOT/bench/ztemplatecheck" "$ROOT/judge/Ztemplatecheck_Spec.json" "$ROOT/judge/Zpurecheck_Spec.json"
     mv "$ROOT/.lakefile.lean.bak" "$ROOT/lakefile.lean"; mv "$ROOT/.lake-manifest.json.bak" "$ROOT/lake-manifest.json"
   }
   trap restore EXIT
@@ -66,6 +67,12 @@ if [ $QUICK -eq 0 ]; then
   check 'passed|consistent|agree' "$APP/impl/test.sh"
   check 'Frozen' "$MIL" freeze "$APP/mil.json" ci-template-check
   check 'AUDIT' "$MIL" audit "$APP/mil.json"
+
+  step "8b. A fresh pure-function app (mil init --pure): init, judge, freeze, strict audit"
+  check 'created' bash -c "cd '$ROOT' && '$MIL' init --pure Zpurecheck bench/ztemplatecheck/zpurecheck"
+  check 'ACCEPTED' "$MIL" judge "$PAPP/mil.json"
+  check 'Frozen' "$MIL" freeze "$PAPP/mil.json" ci-template-check
+  check 'Trust gate|AUDIT' "$MIL" audit "$PAPP/mil.json"
 fi
 
 printf '\nALL CHECKS PASSED\n'

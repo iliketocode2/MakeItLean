@@ -1,0 +1,8 @@
+{
+  "holes": {
+    "AppName.Spec.Impl.maxOf": "AppNameImpl.maxOf a b h"
+  },
+  "obligations": {
+    "AppName.Spec.impl_maxOf_ok": "AppNameImpl.maxOf_ok a b h"
+  }
+}

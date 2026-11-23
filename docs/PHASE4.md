@@ -60,6 +60,60 @@ Same gates, same comparator, same audit.
   larger than run-to-run noise (estimate noise by re-running 5 baseline tasks 3 times). If it only
   costs more, say so plainly.
 
+### A0 result (2026-11-23): GO
+VERINA at commit `66b3ce5` (Apache-2.0), cloned to `~/bench/verina` (outside the repository; not
+committed). 189 tasks (108 basic, 81 advanced). Each task is one Lean file with marked sections
+(imports, helpers, precondition, code, postcondition, proof), a description, tests
+(`input`, `expected`, `unexpected` outputs) and `reject_inputs` for preconditions. VERINA itself
+pins Lean 4.18 with Mathlib, but the Mathlib import belongs to the *reference solution*, not to the
+task.
+
+`bench/verina/port_check.py` rebuilt every task on **Lean 4.36 without Mathlib**:
+- **Reference specs** (helpers, precondition, postcondition; code and proof left as `sorry`):
+  **181 / 189 build** (107/108 basic, 74/81 advanced). Of the 8 that fail, **2 need Mathlib**
+  (`Nat.Prime`, `List.sublists`): excluded. **5 are 4.18→4.36 drift** (`String.data` is gone; one
+  field-notation inference): a mechanical fix (`.data` → `.toList`). **1** hits a `simp` recursion
+  limit under 4.36: excluded unless a one-line fix is obvious.
+- **Full reference solutions** build in 122 / 189, mostly because reference *proofs* use Mathlib
+  lemmas. This does not matter: the agents write their own code and proofs.
+
+Porting cost is therefore near zero and automatic (a converter, not hand work), so the "15
+minutes a task" stop does not apply. Consequences for A1–A2:
+- **Eligible pool:** the 181 tasks whose specs build (after the 5 mechanical fixes, up to 186); the
+  30-task subset is drawn from it with a fixed seed.
+- **Spec evaluation:** VERINA's own rule, rebuilt in our harness: a generated postcondition is
+  *sound* if it accepts every `expected` output and *complete* if it rejects every `unexpected`
+  one (preconditions likewise against `reject_inputs`). Checked by `decide` where the proposition
+  is decidable; VERINA falls back to Plausible (random testing; a separate library, not Mathlib).
+  Whether to add Plausible is an A1 decision.
+- **Converter:** a VERINA task becomes a `mil init --pure` app: the description and tests are
+  the requirements, the reference spec is kept aside for evaluation only (never shown to the
+  agents), and the tests become `#guard` lines.
+
+### A1 progress (2026-11-23)
+- **Decision (user):** no Plausible; `decide` only, and unsettled checks are counted, never scored.
+- **Fairness decision:** neither arm sees VERINA's `test.json`; both get the description and the
+  signature. The tests are used only for scoring (the framework's spec author writes its own
+  worked examples from the description).
+- **Pure-function template, done:** `templates/pure/` and `mil init --pure` (one function, a
+  VERINA-shaped precondition and postcondition, one hole, one obligation; no substrate, no shell;
+  `MIL_ROOT` makes it work at any depth). `mil audit` skips the shell gate for `"kind": "pure"`. A
+  fresh pure app passes init → judge → freeze → strict audit; this is step 8b of `tests/all.sh`.
+- **Scorer, done and validated:** `bench/verina/score.py` checks code correctness, postcondition
+  soundness and completeness, and precondition soundness and completeness against a task's tests
+  with `decide`. Values VERINA stores as Lean text are accepted only as plain literal syntax
+  (whitelist; they are untrusted data). **Validated on VERINA's own references**
+  (`validate_scorer.py`): 0 failures, 0 errors over 152 + tasks, every check either passes or is
+  reported unsettled.
+- **Eligible pool, fixed:** `bench/verina/eligible.json`: **152 tasks (88 basic, 64 advanced)**
+  whose reference spec builds on 4.36 without Mathlib and whose every spec check `decide` settles
+  (so every score of an agent's spec is definite). `decide` fully settles the reference
+  postcondition in 109 / 122 fully built references, which is why Plausible is not needed.
+- **Still to do in A1:** the converter (task → `mil init --pure` app: description and signature as
+  the requirements, contract generated from the signature, precondition and postcondition left to
+  the spec author; the reference held out), a **read guard** so role agents cannot open
+  `~/bench/verina` (it holds the reference solutions and tests), and the one-task timing run per arm.
+
 ## Experiment B: another agent through AGENTS.md
 - **Task:** the same as Phase 2's exit test (a fresh app from a one-paragraph brief, two user
   gates), with a new small app so no agent has seen the answer, e.g. an inventory with

@@ -3,7 +3,8 @@ import Lean.Data.Json
 /-!
 # `mil` — the MakeItLean CLI
 
-    mil init <AppName> <dir>          create an app from templates/app (spec + impl packages)
+    mil init [--pure] <AppName> <dir> create an app from templates/app (on the LeanKV substrate)
+                                      or templates/pure (one pure function)
     mil solution <app>/mil.json       generate the comparator solution module from the hole files
     mil judge <app>/mil.json          build, then `lake comparator` from the root judge workspace
     mil freeze <app>/mil.json <who>   record the spec's file hashes in spec.lock (after sign-off)
@@ -38,6 +39,8 @@ structure Config where
   obligations : List (String × String)
   /-- Spec files hashed into `spec.lock` (besides the lakefile and toolchain). -/
   lockFiles : List String
+  /-- A pure-function app (`"kind": "pure"`): no storage substrate and no shell. -/
+  pure : Bool := false
   deriving Inhabited
 
 def die {α} (msg : String) : IO α := throw (IO.userError msg)
@@ -82,7 +85,8 @@ def loadConfig (path : FilePath) : IO Config := do
            implDir, solutionModule := ← getStr j "solution_module",
            solutionImports := ← getList j "solution_imports",
            holes := ← getFills j "holes" fill fillPath,
-           obligations := ← getFills j "obligations" fill fillPath, lockFiles := ← getList j "lock_files" }
+           obligations := ← getFills j "obligations" fill fillPath, lockFiles := ← getList j "lock_files",
+           pure := (j.getObjValAs? String "kind").toOption == some "pure" }
 
 /-- Run a command, streaming its output; fail if it fails. -/
 def run (cmd : String) (args : Array String) (cwd : Option FilePath := none) : IO Unit := do
@@ -238,23 +242,27 @@ def review (cfgPath : FilePath) : IO Unit := do
   else extra := extra ++ "\n## Spec critic\n\nNo `SpecCritic/` directory: the spec critic's checks are missing.\n"
   IO.FS.writeFile (base / "SPEC_REVIEW.md") ((← IO.FS.readFile (base / "SPEC_REVIEW.md")) ++ extra)
 
-/-- `mil init`: copy templates/app into `dir`, renaming `App`/`app` to the new name. -/
-def init (name dir : String) : IO Unit := do
+/-- `mil init [--pure]`: copy templates/app (an app on the LeanKV substrate) or templates/pure (a
+pure function) into `dir`, renaming `AppName`/`appname` to the new name and `MIL_ROOT` to the
+relative path from the app to the repository root. -/
+def init (name dir : String) (pure : Bool := false) : IO Unit := do
   let root ← findRoot (← IO.currentDir)
-  let tmpl := root / "templates" / "app"
+  let tmpl := root / "templates" / (if pure then "pure" else "app")
   if ← (FilePath.mk dir).pathExists then die s!"{dir} already exists"
+  IO.FS.createDirAll ((FilePath.mk dir).parent.getD ".")
   run "cp" #["-r", tmpl.toString, dir]
+  let absDir ← IO.FS.realPath dir
+  let rel := (absDir.toString.drop (root.toString.length + 1)).toString
+  let up := "/".intercalate ((rel.splitOn "/").map fun _ => "..")
   let files := (← capture "find" #[dir, "-type", "f"]).splitOn "\n" |>.filter (· != "")
   let lower := name.decapitalize
   for f in files do
     let s ← IO.FS.readFile f
-    IO.FS.writeFile f ((s.replace "AppName" name).replace "appname" lower)
+    IO.FS.writeFile f (((s.replace "AppName" name).replace "appname" lower).replace "MIL_ROOT" up)
   for d in (← capture "find" #[dir, "-depth", "-name", "*AppName*"]).splitOn "\n" |>.filter (· != "") do
     run "mv" #[d, d.replace "AppName" name]
   -- register the app's implementation in the root judge workspace (its sandbox must see it)
   let rootLake := root / "lakefile.lean"
-  let absDir ← IO.FS.realPath dir
-  let rel := (absDir.toString.drop (root.toString.length + 1)).toString
   IO.FS.writeFile rootLake ((← IO.FS.readFile rootLake) ++ s!"require {lower}Impl from \"{rel}/impl\"\n")
   run "lake" #["update", s!"{lower}Impl"] root
   IO.println s!"created {dir} (spec package; implementation in {dir}/impl), registered in the judge workspace. Next: write REQUIREMENTS.md (Stage 0)."
@@ -269,8 +277,9 @@ def trust (cfg : Config) (base : FilePath) : IO Unit := do
   let impl := base / cfg.implDir
   let root := (cfg.solutionImports.head?.getD "").takeWhile (· != '.') |>.toString
   let shell := root ++ ".Shell"
-  let shellOk := (← IO.Process.output { cmd := "lake", args := #["build", shell], cwd := impl }).exitCode == 0
-  unless shellOk do die s!"cannot build the shell module {shell} (the CLI entry point the audit checks)"
+  let shellOk := !cfg.pure &&
+    (← IO.Process.output { cmd := "lake", args := #["build", shell], cwd := impl }).exitCode == 0
+  unless cfg.pure || shellOk do die s!"cannot build the shell module {shell} (the CLI entry point the audit checks)"
   let specFile := (cfg.specModule.replace "." "/") ++ ".lean"
   let specMods := (cfg.lockFiles.filter fun f => f.endsWith ".lean" && !cfg.holeFiles.contains f && f != specFile).map moduleOfPath
   let mods := cfg.solutionImports ++ [cfg.solutionModule] ++ (if shellOk then [shell] else []) ++ specMods ++ ["MakeItLean.Gates"]
@@ -280,7 +289,8 @@ def trust (cfg : Config) (base : FilePath) : IO Unit := do
   IO.FS.writeFile file (String.join (mods.map (s!"import {·}\n")) ++
     s!"#assert_trust_cites \"{absBase / "TRUST.md"}\" \"{absBase}\"\n" ++
     -- the shell must reach the filled holes (those filled by a plain name) and the substrate runner
-    s!"#assert_shell_calls main within {root} ({" ".intercalate (fills ++ ["LeanKV.Core.execPick"])})\n")
+    (if cfg.pure then "" else  -- a pure app has no shell
+      s!"#assert_shell_calls main within {root} ({" ".intercalate (fills ++ ["LeanKV.Core.execPick"])})\n"))
   try run "lake" #["env", "lean", ".mil_trust.lean"] impl
   finally IO.FS.removeFile file
 
@@ -298,12 +308,13 @@ def audit (cfgPath : FilePath) (allowUnfrozen : Bool) : IO Unit := do
   IO.println "== trust manifest and shell wiring"; trust cfg base
   IO.println (if ← (base / "spec.lock").pathExists then "AUDIT PASSED" else "AUDIT PASSED (UNFROZEN SPEC)")
 
-def usage : String := "usage: mil init <AppName> <dir> | solution|judge|contract|check-lock|review|audit <mil.json> | freeze <mil.json> <who> | judge --paranoid <mil.json> | audit --allow-unfrozen <mil.json>"
+def usage : String := "usage: mil init [--pure] <AppName> <dir> | solution|judge|contract|check-lock|review|audit <mil.json> | freeze <mil.json> <who> | judge --paranoid <mil.json> | audit --allow-unfrozen <mil.json>"
 
 def main (args : List String) : IO UInt32 := do
   try
     match args with
     | ["init", n, d] => init n d
+    | ["init", "--pure", n, d] => init n d true
     | ["solution", c] => solution c
     | ["judge", c] => judge c false
     | ["judge", "--paranoid", c] => judge c true
