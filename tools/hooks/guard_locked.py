@@ -5,13 +5,17 @@ A file is frozen when it is listed in a `spec.lock` (written by `mil freeze` aft
 sign-off), or is that `spec.lock` itself. Frozen files are never edited; a spec change goes back
 to the user for a new sign-off (agents/AGENTS.md, hard rule 1).
 
-Covers the file tools (Edit, Write, MultiEdit, NotebookEdit) exactly, and Bash on a best-effort
-basis (a command that names a frozen file together with a write-like operation). `mil check-lock`
+Covers the file tools (Edit, Write, MultiEdit, NotebookEdit) exactly, and Bash through
+`shellwrites.py` (redirect targets and write commands, with `cd` followed and heredoc bodies
+skipped; paths named in inline interpreter code count as possible writes). `mil check-lock`
 and `mil audit` remain the detector of record; this hook is prevention.
 
 Exit 0 allows the call; exit 2 blocks it, and the message on stderr is shown to the agent.
 """
 import json, os, re, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import shellwrites  # noqa: E402
 
 WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 BASH_WRITES = re.compile(r"(>|\btee\b|\bsed\s+-i|\bperl\s+-i|\bmv\b|\bcp\b|\brm\b|\btruncate\b|\bdd\b|\bchmod\b|\bln\b|\bpatch\b|\bgit\s+(checkout|restore|apply|stash)\b|open\([^)]*['\"][wa])")
@@ -96,23 +100,23 @@ def main():
         sys.exit(0)
     if tool != "Bash":
         sys.exit(0)
-    # every repository the command can touch: the cwd's, and each named path's
+    # Bash: the files the command can write (redirect targets, write commands, paths named in
+    # inline interpreter code), with `cd` followed and heredoc bodies skipped (shellwrites.py)
     cmd = inp.get("command", "")
-    # redirects that write nothing to a file: to /dev/null, and file-descriptor duplications
-    probe = re.sub(r"\d*>>?\s*/dev/null|\d*>&\d+|&>\s*/dev/null", " ", cmd)
-    if not BASH_WRITES.search(probe):
-        sys.exit(0)
-    roots = {r for r in [repo_root(cwd)] + [root_of(t) for t in path_tokens(cmd, cwd)] if r}
-    for root in roots:
-        for full, lock in frozen_files(root).items():
-            rel = os.path.relpath(full, root)
-            # the path as written: absolute, relative to its repository, or (only when the
-            # command runs in that app's directory) relative to the lock's directory
-            names = {full, rel}
-            lockdir = os.path.realpath(os.path.dirname(lock))
-            if os.path.realpath(cwd) == lockdir:
-                names.add(os.path.relpath(full, lockdir))
-            if any(n in cmd for n in names):
+    targets = shellwrites.write_targets(cmd, cwd)
+    if targets is None:  # unparseable: fall back to "mentions a frozen path and has a write op"
+        targets = path_tokens(cmd, cwd) if BASH_WRITES.search(cmd) else []
+    # write targets may be directories (rm -r, cp into); inline-code mentions are files only
+    checks = [(t, True) for t in targets] + [(t, False) for t in shellwrites.inline_script_paths(cmd, cwd)]
+    cache = {}
+    for t, as_dir in checks:
+        root = root_of(t)
+        if not root:
+            continue
+        if root not in cache:
+            cache[root] = frozen_files(root)
+        for full, lock in cache[root].items():
+            if (shellwrites.touches(t, full) if as_dir else t == full):
                 block(full, lock, root)
     sys.exit(0)
 

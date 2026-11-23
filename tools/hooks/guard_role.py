@@ -20,6 +20,9 @@ space) are allowed. Exit 2 blocks the call and the reason on stderr is shown to 
 """
 import json, os, re, sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import shellwrites  # noqa: E402
+
 ROLES = {
     "mil-spec-author": {"spec"},
     "mil-spec-critic": {"critic"},
@@ -120,13 +123,11 @@ def main():
         check_path(role, cwd, p)
     elif tool == "Bash":
         cmd = inp.get("command", "")
-        if BASH_WRITES.search(cmd):
-            # best effort: every path-like token that exists under the repo is checked
-            for tok in re.findall(r"[\w./-]+", cmd):
-                if "/" in tok or tok.endswith((".lean", ".md", ".json", ".ts", ".js")):
-                    full = os.path.realpath(tok if os.path.isabs(tok) else os.path.join(cwd, tok))
-                    if os.path.exists(full) or os.path.isdir(os.path.dirname(full)):
-                        check_path(role, cwd, tok)
+        targets = shellwrites.write_targets(cmd, cwd)
+        if targets is None:  # unparseable: check every existing path-like word, as before
+            targets = [t for t in re.findall(r"[\w./-]+", cmd) if "/" in t] if BASH_WRITES.search(cmd) else []
+        for t in targets + shellwrites.inline_script_paths(cmd, cwd):
+            check_path(role, cwd, t)
     sys.exit(0)
 
 

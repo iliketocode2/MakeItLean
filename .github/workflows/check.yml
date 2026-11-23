@@ -23,6 +23,11 @@ jobs:
           # bubblewrap sandbox needs them.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
+      - name: Node.js (the Ledger HTTP API and its tests; standard library only, no npm install)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - name: Install elan (the toolchain itself comes from each lean-toolchain file)
         run: |
           curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none

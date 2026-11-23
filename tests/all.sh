@@ -23,6 +23,9 @@ check() {
 step "1. Framework gates and their negative tests (lean/)"
 check 'Build completed' bash -c "cd '$ROOT/lean' && lake build"
 
+step "1b. Guard hooks: frozen files and agent roles (main checkout and a worktree)"
+check 'test_guards:' python3 -I "$ROOT/tools/hooks/test_guards.py"
+
 step "2. Build the mil CLI"
 check 'Build completed' bash -c "cd '$ROOT/cli' && lake build"
 
@@ -42,6 +45,13 @@ if [ $QUICK -eq 0 ]; then
   step "7. Real-file tests (CLI, limits, kill tests)"
   check 'passed|consistent|agree' "$ROOT/examples/ledger/impl/test.sh"
   check 'passed|consistent|agree' "$ROOT/examples/counter/impl/test.sh"
+
+  step "7b. Ledger serve mode and HTTP API against the model (Phase 3: V1-V6, V8)"
+  check 'passed|consistent|agree|reach|replay' "$ROOT/examples/ledger/impl/tests/serve_test.sh"
+  if ! node -e 'process.exit(+process.versions.node.split(".")[0] >= 24 ? 0 : 1)' 2>/dev/null; then
+    echo "FAILED: the HTTP tests need Node.js 24 or later on PATH"; exit 1
+  fi
+  check 'V8:|agree|planted_bug: [0-9]|replay:|edge_test:|kill_test:|all passed' "$ROOT/examples/ledger/http/test.sh"
 
   step "8. A fresh app from the template: init, judge, tests, freeze, strict audit"
   APP="$ROOT/examples/ztemplatecheck"
