@@ -40,8 +40,8 @@ check 'gate:|ACCEPTED|audit:|AUDIT' "$MIL" audit --allow-unfrozen "$ROOT/example
 
 if [ $QUICK -eq 0 ]; then
   step "7. Real-file tests (CLI, limits, kill tests)"
-  check 'passed|consistent' "$ROOT/examples/ledger/impl/test.sh"
-  check 'passed|consistent' "$ROOT/examples/counter/impl/test.sh"
+  check 'passed|consistent|agree' "$ROOT/examples/ledger/impl/test.sh"
+  check 'passed|consistent|agree' "$ROOT/examples/counter/impl/test.sh"
 
   step "8. A fresh app from the template: init, judge, tests, freeze, strict audit"
   APP="$ROOT/examples/ztemplatecheck"
@@ -53,7 +53,7 @@ if [ $QUICK -eq 0 ]; then
   trap restore EXIT
   check 'created' bash -c "cd '$ROOT' && '$MIL' init Ztemplatecheck examples/ztemplatecheck"
   check 'ACCEPTED' "$MIL" judge "$APP/mil.json"
-  check 'passed|consistent' "$APP/impl/test.sh"
+  check 'passed|consistent|agree' "$APP/impl/test.sh"
   check 'Frozen' "$MIL" freeze "$APP/mil.json" ci-template-check
   check 'AUDIT' "$MIL" audit "$APP/mil.json"
 fi

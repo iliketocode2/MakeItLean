@@ -28,6 +28,26 @@ def repo_root(start):
         d = parent
 
 
+def root_of(path):
+    """The repository (or worktree) holding `path`: its nearest ancestor with judge/ and a
+    lakefile. Found from the target, not the agent's working directory, so a worktree's own
+    frozen files are protected whatever the agent's cwd is."""
+    d = path if os.path.isdir(path) else os.path.dirname(path)
+    while d and not os.path.isdir(d):
+        d = os.path.dirname(d)
+    return repo_root(d) if d else None
+
+
+def path_tokens(cmd, cwd):
+    """Absolute forms of the path-like words in a shell command."""
+    out = []
+    for tok in re.findall(r"[\w./~-]+", cmd):
+        if "/" in tok or "." in tok:
+            out.append(os.path.realpath(os.path.expanduser(tok) if tok.startswith("~") else
+                                        tok if os.path.isabs(tok) else os.path.join(cwd, tok)))
+    return out
+
+
 def frozen_files(root):
     """Absolute paths of every frozen file under root, mapped to the lock that freezes it."""
     out = {}
@@ -64,33 +84,36 @@ def main():
     tool = data.get("tool_name", "")
     inp = data.get("tool_input", {}) or {}
     cwd = data.get("cwd") or os.getcwd()
-    root = repo_root(cwd)
-    if root is None:
-        sys.exit(0)
-    frozen = frozen_files(root)
-    if not frozen:
-        sys.exit(0)
     if tool in WRITE_TOOLS:
         p = inp.get("file_path") or inp.get("notebook_path")
         if p:
             full = os.path.realpath(p if os.path.isabs(p) else os.path.join(cwd, p))
-            if full in frozen:
-                block(full, frozen[full], root)
-    elif tool == "Bash":
-        cmd = inp.get("command", "")
-        # redirects that write nothing to a file: to /dev/null, and file-descriptor duplications
-        probe = re.sub(r"\d*>>?\s*/dev/null|\d*>&\d+|&>\s*/dev/null", " ", cmd)
-        if BASH_WRITES.search(probe):
-            for full, lock in frozen.items():
-                rel = os.path.relpath(full, root)
-                # the path as written: absolute, relative to the repo, or (only when the command
-                # runs in that app's directory) relative to the lock's directory
-                names = {full, rel}
-                lockdir = os.path.realpath(os.path.dirname(lock))
-                if os.path.realpath(cwd) == lockdir:
-                    names.add(os.path.relpath(full, lockdir))
-                if any(n in cmd for n in names):
-                    block(full, lock, root)
+            root = root_of(full)
+            if root:
+                frozen = frozen_files(root)
+                if full in frozen:
+                    block(full, frozen[full], root)
+        sys.exit(0)
+    if tool != "Bash":
+        sys.exit(0)
+    # every repository the command can touch: the cwd's, and each named path's
+    cmd = inp.get("command", "")
+    # redirects that write nothing to a file: to /dev/null, and file-descriptor duplications
+    probe = re.sub(r"\d*>>?\s*/dev/null|\d*>&\d+|&>\s*/dev/null", " ", cmd)
+    if not BASH_WRITES.search(probe):
+        sys.exit(0)
+    roots = {r for r in [repo_root(cwd)] + [root_of(t) for t in path_tokens(cmd, cwd)] if r}
+    for root in roots:
+        for full, lock in frozen_files(root).items():
+            rel = os.path.relpath(full, root)
+            # the path as written: absolute, relative to its repository, or (only when the
+            # command runs in that app's directory) relative to the lock's directory
+            names = {full, rel}
+            lockdir = os.path.realpath(os.path.dirname(lock))
+            if os.path.realpath(cwd) == lockdir:
+                names.add(os.path.relpath(full, lockdir))
+            if any(n in cmd for n in names):
+                block(full, lock, root)
     sys.exit(0)
 
 

@@ -51,6 +51,8 @@ def area(rel):
     name = sub[-1]
     if sub == ["FRICTION.md"]:
         return "everyone"
+    if name.startswith("REQUIREMENTS") and name.endswith(".md") and "SpecCritic" not in sub:
+        return "spec"  # any requirements document of the app (e.g. http/REQUIREMENTS.md)
     if sub == ["TRUST.md"]:
         return "trust"
     if sub in (["REQUIREMENTS.md"], ["mil.json"]):
@@ -75,10 +77,20 @@ def deny(role, rel, why):
     sys.exit(2)
 
 
-def check_path(role, root, cwd, p):
+def root_of(path):
+    """The repository or worktree holding `path` (found from the target, not the cwd)."""
+    d = path if os.path.isdir(path) else os.path.dirname(path)
+    while d and not os.path.isdir(d):
+        d = os.path.dirname(d)
+    r = repo_root(d) if d else None
+    return os.path.realpath(r) if r else None
+
+
+def check_path(role, cwd, p):
     full = os.path.realpath(p if os.path.isabs(p) else os.path.join(cwd, p))
-    if os.path.commonpath([full, root]) != root:
-        return  # outside the repository (scratch space)
+    root = root_of(full)
+    if root is None:
+        return  # outside any MakeItLean repository (scratch space)
     rel = os.path.relpath(full, root)
     a = area(rel)
     if a is None:
@@ -98,10 +110,6 @@ def main():
     if role not in ROLES:
         sys.exit(0)
     cwd = data.get("cwd") or os.getcwd()
-    root = repo_root(cwd)
-    if root is None:
-        sys.exit(0)
-    root = os.path.realpath(root)
     tool = data.get("tool_name", "")
     inp = data.get("tool_input", {}) or {}
     if tool in WRITE_TOOLS:
@@ -109,7 +117,7 @@ def main():
         if not p:
             sys.stderr.write(f"BLOCKED for role {role}: {tool} call without a file path.\n")
             sys.exit(2)
-        check_path(role, root, cwd, p)
+        check_path(role, cwd, p)
     elif tool == "Bash":
         cmd = inp.get("command", "")
         if BASH_WRITES.search(cmd):
@@ -118,7 +126,7 @@ def main():
                 if "/" in tok or tok.endswith((".lean", ".md", ".json", ".ts", ".js")):
                     full = os.path.realpath(tok if os.path.isabs(tok) else os.path.join(cwd, tok))
                     if os.path.exists(full) or os.path.isdir(os.path.dirname(full)):
-                        check_path(role, root, cwd, tok)
+                        check_path(role, cwd, tok)
     sys.exit(0)
 
 
