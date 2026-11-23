@@ -78,7 +78,9 @@ def main():
                 block(full, frozen[full], root)
     elif tool == "Bash":
         cmd = inp.get("command", "")
-        if BASH_WRITES.search(cmd):
+        # redirects that write nothing to a file: to /dev/null, and file-descriptor duplications
+        probe = re.sub(r"\d*>>?\s*/dev/null|\d*>&\d+|&>\s*/dev/null", " ", cmd)
+        if BASH_WRITES.search(probe):
             for full, lock in frozen.items():
                 rel = os.path.relpath(full, root)
                 # the path as written: absolute, relative to the repo, or (only when the command

@@ -29,8 +29,8 @@ N64="$(printf 'a%.0s' $(seq 64))"; N65="$(printf 'a%.0s' $(seq 65))"
 expect "VALUE 1" 0 "$S" incr "$N64"
 expect "ERR" 1 "$S" incr "$N65"
 # Usage errors.
-expect "usage: counter <dir> incr|get <name>" 2 "$S" frobnicate a
-expect "usage: counter <dir> incr|get <name>" 2 "$S"
+expect "usage: counter <dir> incr|get <name> | counter <dir> serve" 2 "$S" frobnicate a
+expect "usage: counter <dir> incr|get <name> | counter <dir> serve" 2 "$S"
 # Persistence across runs (each run reopens the store from disk).
 expect "VALUE 2" 0 "$S" get a
 

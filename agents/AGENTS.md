@@ -23,12 +23,23 @@ The worked example is **`examples/counter/`**. Read it end to end before writing
 | `impl/<App>Impl/Core.lean` | The implementation of `pick` on the in-memory `Tree`, reading it with `LeanKV.Core.lookup` (proven equal to the reference lookup). |
 | `impl/<App>Impl/Proofs.lean` | The proof of the obligation (see `CounterImpl.pick_ok`: `toList_lookup` bridges `Core.lookup` to the spec), then `pickOk`, `refines` and `crash_consistent` (keep the template's; `impl/audit.lean` pins them to the frozen spec). |
 | `impl/<App>Impl/Shell.lean` | The CLI: open the store on real files (`LeanKV.Shell.lkvOpen`, `RealM`), run `LeanKV.Core.execPick`, print answers. Trusted, not verified: keep it thin. |
+| `impl/<App>Impl/Text.lean` | The line protocol: `parseCmd` (words → command) and `render` (answer → line). Shared by the CLI, `serve` and the oracle. Trusted. |
+| `impl/<App>Impl/Oracle.lean` | `<app>-oracle`: reads protocol lines and answers with the **spec's** `cstep` from the empty state. The reference model as a process, for differential tests. |
+| `impl/tests/gen_commands.py` | `gen(rng, n)`: random protocol lines for `tools/difftest.py`; must reach every command, every error and every limit a test can reach. |
 | `mil.json` | Which files hold holes, the **names** of the holes and obligations, which files the lock covers. Locked at the freeze. |
 | `impl/fill.json` | How each hole and obligation is filled (the Lean terms). Not locked, so Stage 4 never touches a frozen file. |
 | `impl/test.sh`, `impl/tests/` | Stage 5: the CLI test (every example, error and limit) and the kill test. Skeletons from the template. |
 | `TRUST.md` | Stage 6: each requirement proven / tested / trusted, citing theorem names (`mil audit` checks they exist). |
 
 **Import `LeanKVSol.Base.*`** (LeanKV's hole-free library spec) for LeanKV types and lemmas, **never `LeanKV.Spec.*`**. The latter clashes with LeanKV's core.
+
+## Non-Lean shells and differential tests
+The shell is trusted, not proven. Keep it thin, and check it against the model:
+- **Line protocol.** Every app speaks one command per line and one answer per line (`Text.lean`). The CLI runs one command; `<app> <dir> serve` keeps the store open and runs a stream of them, stopping at the first I/O error.
+- **Oracle.** `<app>-oracle` answers the same lines with the frozen spec's model from the empty state.
+- **Differential test.** `python3 tools/difftest.py --sut '<system> {dir} …' --oracle <app>-oracle --gen tests/gen_commands.py` feeds both the same random sequences and requires identical answers; a disagreement is shrunk to a short failing sequence. The template's `impl/test.sh` runs it against `serve`.
+- **A non-Lean shell** (for example a TypeScript HTTP API) is **transport only**: it parses requests, forwards each command to `<app> <dir> serve` and maps answers to responses. It never re-implements the app's rules. It is checked by `difftest` through a small **adapter** that speaks the line protocol on stdin/stdout and calls the shell (HTTP in, answer line out). The mapping between requests/responses and protocol lines is part of `REQUIREMENTS.md`.
+- **`TRUST.md`** gives such a component the status **Tested against the model**, citing the difftest run (runs × commands, what the generator reaches) and a planted-bug check showing the test can fail. It is never "Proven".
 
 ## Workflow: stages and gates
 Never skip a gate. Stages 0 and 2 end with **the user's explicit approval**. Ask, and wait.
