@@ -148,6 +148,44 @@ that needs harder tasks. The framework costs about **5× the tokens and 9× the 
 baseline here. Each agent carries roughly 40k tokens of fixed context (system prompt, AGENTS.md),
 so a four-role run is dominated by that fixed cost on small tasks.
 
+### A2 batch 1 (2026-11-23): a ceiling
+Tasks: `verina_advanced_12`, `verina_advanced_15`, `verina_basic_101`, `verina_basic_108`,
+`verina_basic_12` (the first 2 advanced and 3 basic of the fixed sample). One workflow, 30 agents,
+no errors, no halts. Scored by `bench/verina/batch_score.py` from the main session.
+
+| Task | Framework | Baseline |
+|---|---|---|
+| advanced_12 | lock ok, ACCEPTED, all 41 checks pass; 286,894 tokens | proof ok, all 41 pass; 44,025 |
+| advanced_15 | lock ok, ACCEPTED, all 28 pass; 281,949 | proof ok, all 28 pass; 42,729 |
+| basic_101 | lock ok, ACCEPTED, all 30 pass; 251,534 | proof ok, all 30 pass; 41,054 |
+| basic_108 | lock ok, ACCEPTED, all 30 pass; 277,187 | proof ok, all 30 pass; 46,969 |
+| basic_12 | lock ok, ACCEPTED, all 30 pass; 266,671 | proof ok, all 30 pass; 41,427 |
+
+- **Quality: no difference.** Both arms solved every task: code correct, specs sound and
+  complete on every test, proofs on the standard axioms only. The two arms' postconditions are
+  real declarative specs (not mirrors of the code) and nearly identical in content.
+- **Cost:** framework ≈ 273k tokens a task (of which ≈ 39k is the freeze step, a fixed-context
+  agent that runs one command; it can be done by the orchestrator), baseline ≈ 43k: **≈ 6×**.
+  Advanced tasks cost about the same as basic ones, well under the 330–550k estimate.
+- **Reading:** VERINA's published proof rate (o3: 4.9%) does not transfer to the current model on
+  these converted tasks (Lean 4.36, core library, decidable specs). With both arms at 100%, the
+  rest of the 30-task sample is unlikely to separate them.
+
+### A2 protocol change (user decision, 2026-11-23): screen for hard tasks
+Because batch 1 saturated, the pre-registered random 30-task comparison is replaced by a
+**screen**. The question changes from "does the framework do better on a random sample?" to
+"**does the framework rescue the tasks a single agent gets wrong?**", and results must be read as
+answering that narrower question (selection on baseline failure; regression to the mean is
+possible, so a rescued task is re-run with the baseline too).
+1. Run the baseline alone on every eligible advanced task not yet run (62 tasks).
+2. A task counts as a **baseline failure** if the proof is not accepted, the code fails a test, or
+   the spec fails a soundness or completeness check (`batch_score.py`'s criteria).
+3. If there are failures: run the framework on exactly those tasks, and the baseline once more on
+   each (to separate "the framework helped" from "a second try helped").
+4. If there are none: the ceiling is confirmed for this model on VERINA; record a null result and
+   go to Experiment B.
+The freeze step is done by the orchestrator from now on (it cost a fixed-context agent per task).
+
 ## Experiment B: another agent through AGENTS.md
 - **Task:** the same as Phase 2's exit test (a fresh app from a one-paragraph brief, two user
   gates), with a new small app so no agent has seen the answer, e.g. an inventory with

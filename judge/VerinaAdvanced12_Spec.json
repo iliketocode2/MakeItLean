@@ -1,0 +1,5 @@
+{"theorem_names": ["VerinaAdvanced12.Spec.impl_firstDuplicate_ok"],
+ "solution_module": "VerinaAdvanced12Sol.Holes",
+ "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
+ "definition_names": ["VerinaAdvanced12.Spec.Impl.firstDuplicate"],
+ "challenge_module": "VerinaAdvanced12.Spec"}

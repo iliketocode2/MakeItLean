@@ -1,0 +1,5 @@
+{"theorem_names": ["VerinaBasic12.Spec.impl_cubeSurfaceArea_ok"],
+ "solution_module": "VerinaBasic12Sol.Holes",
+ "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
+ "definition_names": ["VerinaBasic12.Spec.Impl.cubeSurfaceArea"],
+ "challenge_module": "VerinaBasic12.Spec"}

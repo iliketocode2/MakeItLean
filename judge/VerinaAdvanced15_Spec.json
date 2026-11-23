@@ -1,0 +1,5 @@
+{"theorem_names": ["VerinaAdvanced15.Spec.impl_increasingTriplet_ok"],
+ "solution_module": "VerinaAdvanced15Sol.Holes",
+ "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
+ "definition_names": ["VerinaAdvanced15.Spec.Impl.increasingTriplet"],
+ "challenge_module": "VerinaAdvanced15.Spec"}
