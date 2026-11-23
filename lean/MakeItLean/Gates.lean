@@ -11,7 +11,7 @@ Spec gates (Stage 1–2), run as commands at the end of an app's spec aggregator
 
 Verified-code audit (Stage 6), run in the implementation package:
 
-    #audit_verified MyAppImpl.Core MyAppImpl.Proofs forbid_imports MyAppImpl.Shell
+    #audit_verified MyAppImpl.Core MyAppImpl.Proofs forbid_imports MyAppImpl.Shell MyAppImpl.Text MyAppImpl.Oracle
 
 An **implementation hole** is a declaration whose doc comment contains `IMPLEMENTATION HOLE`.
 Every gate has a negative test in `MakeItLeanTest/` (planted violations it must reject).
@@ -145,13 +145,15 @@ with an underscore, an inner capital (`pickOk`) or a dot path (`LedgerImpl.pick`
 def looksLikeLeanName (tok : String) : Bool :=
   let cs := tok.toList
   let identChar (c : Char) := c.isAlphanum || c == '_' || c == '.' || c == '\'' || c == '!' || c == '?'
-  let exts := [".lean", ".md", ".c", ".h", ".sh", ".py", ".json", ".log", ".lock", ".txt"]
+  let exts := [".lean", ".md", ".c", ".h", ".sh", ".py", ".json", ".log", ".lock", ".txt", ".ts", ".js", ".mjs",
+    ".cjs", ".yml", ".yaml", ".toml"]
   match cs with
   | [] => false
   | c :: _ =>
     let keywords := ["implemented_by", "native_decide", "bv_decide", "extern", "partial_fixpoint"]
     (c.isAlpha || c == '_') && cs.all identChar && !exts.any (tok.endsWith ·) &&
     !keywords.contains tok && cs.any Char.isLower &&  -- skip error codes like `BAD_NAME`
+    !tok.startsWith "__" &&  -- skip dunder words such as the JSON key `__proto__`
     (cs.contains '_' || cs.contains '.' ||
       (cs.zip cs.tail).any (fun (a, b) => a.isLower && b.isUpper))
 
@@ -177,18 +179,22 @@ elab "#assert_trust_cites " path:str dir:str : command => do
     for i in [0:comps.length] do suffixes := suffixes.insert (".".intercalate (comps.drop i))
   for m in env.header.moduleNames do suffixes := suffixes.insert m.toString
   let toks := (codeSpans text).filter looksLikeLeanName |>.eraseDups
-  let missing := toks.filter fun t => !suffixes.contains t && !files.contains t
+  -- `h.index` in prose: a field access on a short lowercase local; the field must exist
+  let fieldOk (t : String) : Bool := match t.splitOn "." with
+    | [v, f] => v.length ≤ 3 && v.toList.all Char.isLower && suffixes.contains f
+    | _ => false
+  let missing := toks.filter fun t => !suffixes.contains t && !files.contains t && !fieldOk t
   if missing.isEmpty then logInfo m!"Trust gate: OK ({toks.length} cited names exist)"
   else throwError m!"Trust gate: {path.getString} cites names that do not exist: {missing}"
 
-syntax (name := auditVerified) "#audit_verified " (ident)+ " forbid_imports " ident : command
+syntax (name := auditVerified) "#audit_verified " (ident)+ " forbid_imports " (ident)+ : command
 
-/-- `#audit_verified A B … forbid_imports S`: in modules under `A`, `B`, …, every theorem uses
+/-- `#audit_verified A B … forbid_imports S T …`: in modules under `A`, `B`, …, every theorem uses
 only the three standard axioms; no declaration is `unsafe`, `opaque` (which is what `partial def`
-compiles to), `@[implemented_by]` or `@[extern]`; and no such module imports a module under `S`. -/
+compiles to), `@[implemented_by]` or `@[extern]`; and no such module imports a module under any of `S`, `T`, … (the trusted shell and the modules only it uses). -/
 @[command_elab auditVerified] def elabAuditVerified : CommandElab := fun stx => do
   let pfxs := stx[1].getArgs.map (·.getId)
-  let shell := stx[3].getId
+  let shells := stx[3].getArgs.map (·.getId)
   let env ← getEnv
   let verified (m : Name) := pfxs.any (·.isPrefixOf m)
   let mut bad := #[]
@@ -212,9 +218,9 @@ compiles to), `@[implemented_by]` or `@[extern]`; and no such module imports a m
     let m := env.header.moduleNames[i]!
     if verified m then
       for imp in env.header.moduleData[i]!.imports do
-        if shell.isPrefixOf imp.module then bad := bad.push s!"{m} imports {imp.module}"
+        if shells.any (·.isPrefixOf imp.module) then bad := bad.push s!"{m} imports {imp.module}"
   if bad.isEmpty then
-    logInfo m!"Verified-code audit: OK ({nThm} theorems and {nDef} definitions on standard axioms; no unsafe/partial/opaque/implemented_by/extern; {shell} not imported)"
+    logInfo m!"Verified-code audit: OK ({nThm} theorems and {nDef} definitions on standard axioms; no unsafe/partial/opaque/implemented_by/extern; {shells.toList} not imported)"
   else throwError m!"Verified-code audit FAILED:\n{"\n".intercalate (bad.qsort (· < ·)).toList}"
 
 syntax (name := assertShellCalls) "#assert_shell_calls " ident " within " ident " (" ident* ")" : command

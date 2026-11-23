@@ -49,3 +49,42 @@ model, built by separate agent roles whose write access is enforced.
 - The lock guard's Bash check blocks any command that both *mentions* a frozen path and contains a
   write operator, even when the write goes elsewhere (a heredoc that quotes the path into a doc).
   Workaround: write documents with the file tools. Possible fix: parse redirect targets instead.
+  **Fixed after the test** (see below).
+
+## Result: exit test PASSED (2026-11-22)
+Three fresh role agents in one shared worktree: `mil-spec-author` (Stage 0: Ledger REQUIREMENTS v3
+and the HTTP API requirements, 35 literal examples; one gate, the user's answers relayed verbatim),
+`mil-implementer` (`Text.lean`, `serve`, `ledger-oracle`, the TypeScript server and adapter, tests
+V1–V8), `mil-auditor` (verified every claim itself, 18 adversarial probe requests, `TRUST.md` v3).
+The spec author raised all six watch items unprompted (the reversed non-goal, concurrency,
+ack-after-durable, process failure, localhost/no-auth, the full error mapping).
+
+All seven pass criteria met, each re-run independently by the orchestrator: HTTP vs `ledger-oracle`
+2 × 30 runs × 200 commands agree; 4/4 planted bugs caught and shrunk to 1–2 commands; 35 literal
+examples replayed byte for byte (417 checks); Ledger unchanged (lock OK, 74/74 CLI checks, kill
+tests, AUDIT PASSED); `TRUST.md` calls serve and HTTP "Tested against the model", never proven, with
+an honest "What the tests do not show"; no npm dependencies; no role worked around a block.
+Merged to `main` (9fb8917); the HTTP tests are step 7b of `tests/all.sh` and CI runs Node 24.
+
+## Post-test fixes (from the three agents' FRICTION rows and the orchestrator's)
+1. **Guards parse shell commands** (`tools/hooks/shellwrites.py`): real redirect targets and write
+   commands, `cd` followed, heredoc bodies skipped, `/dev/null` and `2>&1` ignored; inline
+   interpreter code counts the files it names as written (files only, compared exactly). Every
+   false positive from the run is a case in `tools/hooks/test_guards.py` (88 cases, main checkout
+   and a throwaway worktree, cleaned up on failure and on SIGTERM); step 1b of `tests/all.sh`.
+2. **`forbid_imports` takes a list**; every app's `audit.lean` forbids verified code from importing
+   `Shell`, `Text` and `Oracle` (negative test for the list form).
+3. **Trust gate**: knows `.ts/.js/.mjs/.cjs/.yml/.yaml/.toml` file names, skips dunder words such as
+   `__proto__`, and accepts a field access on a short local (`h.index`) when the field exists; a
+   made-up field is still rejected (negative test).
+4. **AGENTS.md**: the readiness convention (an empty line is answered `ERR USAGE` without touching
+   the store), values the line protocol cannot carry (the `?` stand-in, invalid in the spec), literal
+   examples generated from data and replayed, the four TRUST statuses and "What the tests do not
+   show", Ledger's `http/` as the worked example for non-Lean shells, how to change a frozen app's
+   requirements, and what the guards count as a write.
+
+Not done: a reusable template for non-Lean shells (Ledger's `http/` is the worked example instead);
+a real mid-run `ERR IO` from the real ledger (stub only).
+
+**Next: Phase 4** (PLAN.md): evaluation on a VERINA/FVAPPS subset; trying other agents through
+AGENTS.md.

@@ -4,7 +4,7 @@ import MakeItLean.Gates
 
 /-! Stage 6: the verified-code audit (run by `mil audit`). The shell is trusted, not verified,
 and must not be imported by verified modules. -/
-#audit_verified LedgerImpl.Core LedgerImpl.Proofs LedgerSol forbid_imports LedgerImpl.Shell
+#audit_verified LedgerImpl.Core LedgerImpl.Proofs LedgerSol forbid_imports LedgerImpl.Shell LedgerImpl.Text LedgerImpl.Oracle
 
 /-! End-to-end crash consistency: `LedgerImpl.crash_consistent` is `LeanKV.Proofs.app_crash_consistent`
 applied to these two facts. Pinning them to the frozen spec's `dec`, `cstep` and `pickRef` means

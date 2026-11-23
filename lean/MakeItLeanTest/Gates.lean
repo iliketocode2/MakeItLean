@@ -59,7 +59,7 @@ mil.json lists BaitSpec.twice_id, which is not a theorem naming a hole
 /-! The trust gate: a manifest citing a theorem that does not exist is rejected; error codes,
 commands and file names are not mistaken for theorem names. -/
 
-/-- error: Trust gate: MakeItLeanTest/Bait/TRUST_bait.md cites names that do not exist: [made_up_theorem] -/
+/-- error: Trust gate: MakeItLeanTest/Bait/TRUST_bait.md cites names that do not exist: [made_up_theorem, g.no_such_field] -/
 #guard_msgs in #assert_trust_cites "MakeItLeanTest/Bait/TRUST_bait.md" "MakeItLeanTest/Bait"
 
 /-- error: Trust gate: MakeItLeanTest/Bait/NO_TRUST.md does not exist (Stage 6 requires a trust manifest) -/
@@ -71,3 +71,16 @@ commands and file names are not mistaken for theorem names. -/
 
 /-- error: Shell gate: BaitWiring.bypassMain never reaches [BaitWiring.verifiedStep] (the shell bypasses the verified code) -/
 #guard_msgs in #assert_shell_calls BaitWiring.bypassMain within MakeItLeanTest (BaitWiring.verifiedStep)
+
+/-! `forbid_imports` takes a list: an import of any listed module (here the second) is caught. -/
+/--
+error: Verified-code audit FAILED:
+MakeItLeanTest.Bait.Verified imports MakeItLeanTest.Bait.Shell
+axiom BaitVerified.trustMe used by BaitVerified.viaAxiom
+axiom sorryAx used by BaitVerified.cheat
+axiom sorryAx used by BaitVerified.hiddenSorry
+implemented_by: BaitVerified.impl
+opaque/partial: BaitVerified.loop
+unsafe: BaitVerified.uns
+-/
+#guard_msgs in #audit_verified MakeItLeanTest.Bait.Verified forbid_imports MakeItLeanTest.Bait.Good MakeItLeanTest.Bait.Shell
