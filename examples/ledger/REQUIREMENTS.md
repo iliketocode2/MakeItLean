@@ -1,11 +1,28 @@
-# Ledger — Requirements (Stage 0, v2: APPROVED 2026-11-22)
+# Ledger — Requirements (Stage 0, v3: APPROVED 2026-11-22)
 
 > Stage 0 of the MakeItLean workflow (`agents/AGENTS.md`). Plain English only. Every requirement
 > has an ID (R1, R2, …) that the Lean spec will cite.
 >
-> **Approved by the user on 2026-11-22.** D1–D6 were decided as recommended (recorded below as
-> **Decided**). v2 adds the `accounts` and `total` commands (R10a, R10b, D6) and states the scope
-> of the invariants (§4). Changes from here on need a new sign-off.
+> **v2 was approved by the user on 2026-11-22.** D1–D6 were decided as recommended (recorded below
+> as **Decided**). v2 added the `accounts` and `total` commands (R10a, R10b, D6) and stated the
+> scope of the invariants (§4).
+>
+> **v3, approved by the user on 2026-11-22**, adds an HTTP JSON API. D7 was decided as
+> recommended (a). The API's decisions are recorded in `http/REQUIREMENTS.md` §10: H-D2 went to
+> (b), digit strings, and every other one went as recommended. Changes from here on need a new
+> sign-off. It reverses the v1 non-goal
+> "a server mode or network access" (§8). The changes are:
+> - **R18** (new): a `serve` mode, `ledger <dir> serve`, that keeps the ledger open and answers one
+>   command per input line.
+> - **R19** (new): `ledger-oracle`, the frozen reference model as a process, used by the tests.
+> - **R20** (new): the HTTP API itself, specified in full in
+>   [`http/REQUIREMENTS.md`](http/REQUIREMENTS.md) (IDs H1–H16, literal examples E1–E35).
+> - §7 and §8 are updated to match, and §9 records decision **D7**.
+>
+> **Unchanged in v3:** R1–R17, every command, answer, error code, check order and exit code of the
+> one-shot CLI, the storage layout, and the frozen Lean spec `ledger-v1`. The reference model
+> already decides every answer the API gives, so v3 needs no change to the spec and no new
+> sign-off of it.
 
 ## 1. What it is
 Ledger is a command-line bank ledger that keeps its state on disk. It holds named accounts, each
@@ -126,6 +143,44 @@ every ledger state.
 - **R17. Corruption.** Ledger inherits LeanKV's recovery rules: a torn tail from a crash is cut off
   silently; corruption elsewhere makes the ledger refuse to open (exit 3) without changing any file.
 
+### 5a. Serve mode, the oracle and the HTTP API (v3)
+- **R18. Serve mode.** `ledger <dir> serve` opens the ledger once and then reads commands from
+  standard input, one per line, and writes one answer line per command to standard output.
+  - **Input lines** use the same words as the command line (R14): `open NAME`,
+    `deposit NAME AMOUNT`, `withdraw NAME AMOUNT`, `transfer FROM TO AMOUNT`, `balance NAME`,
+    `accounts`, `total`. Words are separated by one or more spaces. Amounts follow R4 (plain
+    decimal digits).
+  - **Answer lines** are exactly what the one-shot CLI prints for the same command on the same
+    ledger: `OK`, `BALANCE b`, `ACCOUNTS …`, `TOTAL t`, `ERR <CODE> [detail]`. There are two
+    differences. A line that is not a command (unknown word, wrong number of words, amount not
+    plain digits) is answered with exactly `ERR USAGE`, with no usage text, and serve continues
+    with the next line. An I/O error is answered with exactly `ERR IO`.
+  - **Durability** is the same as for the CLI (R14–R16): a change is durable on disk before its
+    answer line is written. Each answer line is flushed as soon as it is written.
+  - **Stopping.** At the end of input, serve exits 0. After an I/O error it writes `ERR IO` and
+    exits 4 without reading more lines. As in R16, the command that failed may or may not have
+    been applied. If the data files are corrupt, serve prints `ERR CORRUPT offset p` and exits 3
+    before reading any line, changing no file (R17). If the store cannot be opened, it prints a
+    line starting with `ERR IO` and exits 4.
+  - **The CLI is unchanged.** Every existing command, answer and exit code of R14 stays exactly
+    as it is. The only new behaviour is that `ledger <dir> serve` starts serve mode. Before v3 it
+    was a usage error (exit 2). `serve` was never a ledger operation (**Decided D7**).
+  - One serve process uses `<dir>` at a time, and nothing else uses `<dir>` while it runs. This is
+    the exclusivity assumption of §6 and §8. It is trusted, not enforced.
+- **R19. The oracle.** `ledger-oracle` reads the same input lines and writes the same answer
+  lines as serve mode. It answers every command with the frozen spec's reference model (`cstep`),
+  starting from the empty ledger, and uses no files and no implementation code. Serve mode, the
+  oracle and the one-shot CLI parse lines and print answers with one shared piece of code, so a
+  comparison of serve (or the HTTP API) with the oracle compares like with like.
+- **R20. HTTP JSON API.** A server written in TypeScript (`examples/ledger/http/`) gives HTTP
+  access to every Ledger command, with JSON request and response bodies. It runs one
+  `ledger <dir> serve` process for as long as it runs. The server is **transport only**: every
+  ledger rule (names, amounts, balances, the check order of §3, durability) is decided by the Lean
+  ledger, never by the TypeScript code. It uses the Node.js standard library only, with no npm
+  packages. The exact API (routes, bodies, status codes, literal examples, startup, failures and
+  verification) is [`http/REQUIREMENTS.md`](http/REQUIREMENTS.md). That document is part of these
+  requirements.
+
 ## 6. Storage layout (how R14–R17 are achieved)
 Ledger keeps its state in **LeanKV** (the substrate), in `<dir>/leankv.log`.
 - One LeanKV key per account: **key = the account name** (1–64 bytes, a valid LeanKV key);
@@ -155,16 +210,38 @@ Ledger keeps its state in **LeanKV** (the substrate), in `<dir>/leankv.log`.
 - **Trusted, not verified:** the CLI shell (argument parsing and printing), the operating system's
   file system and `fsync`, LeanKV's C file layer, the Lean compiler and runtime, and the assumption
   that only Ledger writes the store.
+- **v3 additions** (detail in `http/REQUIREMENTS.md` §8):
+  - Nothing new is *proven*. The proven rows above are unchanged, and the serve loop and the HTTP
+    server are never described as proven.
+  - **Tested against the model:** serve mode (R18) against `ledger-oracle` (R19), and the HTTP API
+    (R20) against `ledger-oracle` through a line-protocol adapter. Both use differential tests on
+    random command sequences. A planted-bug check shows the test can fail. Every literal HTTP
+    example is replayed byte for byte.
+  - **Trusted:** the serve loop and the shared line parser/printer, the TypeScript server and the
+    test adapter, the Node.js runtime and its HTTP parser, the operating system's sockets, and
+    exclusive use of `<dir>` by one serve process.
 
 ## 8. Non-goals (v1)
 - Closing or renaming accounts; overdrafts or credit limits; interest and fees.
 - Transaction history / a journal of past entries (only current balances are kept).
 - Multiple currencies; fractions of a cent; negative amounts.
 - Several processes using the same `<dir>` at the same time (one command at a time).
-- Users, passwords, or permissions.
-- A server mode or network access.
+- Users, passwords, or permissions. This applies to the HTTP API as well: it has no
+  authentication.
+- ~~A server mode or network access.~~ **Reversed in v3:** serve mode (R18) and the HTTP API (R20)
+  are now in scope. Their own non-goals are in `http/REQUIREMENTS.md` §9.
 
 ## 9. Decisions (2026-11-22)
 D1–D6 approved as recommended. The double-entry framing (§1, R13), error codes and check order
 (§3), exit codes (R14), storage layout (§6) and non-goals (§8) are confirmed as drafted. The
 invariants' scope (§4) was clarified at the user's request.
+
+### v3 decisions (user, 2026-11-22)
+- **Decided D7:** serve mode is the subcommand `ledger <dir> serve` (option (a)), which is the
+  framework's convention. `serve` was not an existing ledger operation, and every existing CLI
+  command, answer and exit code stays unchanged. (Option (b) was a separate `ledger-serve`
+  executable.)
+- The HTTP API's decisions H-D1 to H-D10 are recorded in `http/REQUIREMENTS.md` §10. H-D2 went to
+  (b): amounts, balances and totals are JSON strings of base-10 digits. Every other decision went
+  as recommended.
+- The `TRUST.md` boundary in §7 (and `http/REQUIREMENTS.md` §8) is approved as planned.

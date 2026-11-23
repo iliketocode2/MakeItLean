@@ -1,8 +1,9 @@
 import LedgerImpl.Core
+import LedgerImpl.Text
 import LeanKVImpl.Shell.FileIO
 
 /-!
-# `ledger`: the Ledger CLI (trusted shell, REQUIREMENTS.md R14)
+# `ledger`: the Ledger CLI and serve mode (trusted shell, REQUIREMENTS.md R14, R18)
 
     ledger <dir> open NAME
     ledger <dir> deposit NAME AMOUNT
@@ -11,59 +12,68 @@ import LeanKVImpl.Shell.FileIO
     ledger <dir> balance NAME
     ledger <dir> accounts
     ledger <dir> total
+    ledger <dir> serve           one command per stdin line, one answer per stdout line (R18)
 
 The store is LeanKV's proven core on real files (`<dir>/leankv.log`). Each command goes through
 `execPick` with the proven `LedgerImpl.pick`, so Ledger inherits LeanKV's durability and crash
 consistency (`substrate_crash_consistent`). The printed answer is the spec's `cstep` evaluated on
-the ledger the index stood for before the command. This file (argument parsing, answer
-formatting, exit codes) is trusted, not verified: keep it thin.
+the ledger the index stood for before the command. Parsing and printing are the shared line
+protocol (`LedgerImpl.Text`). This file (argument handling, the serve loop, exit codes) is
+trusted, not verified: keep it thin.
 -/
 
-open LeanKV.Spec LeanKV.Shell Ledger.Spec
+open LeanKV.Spec LeanKV.Shell Ledger.Spec LedgerImpl
 
-/-- Bytes of an ASCII name as text (valid names are ASCII, R2). -/
-def nameText (n : Bytes) : String := String.ofList (n.map fun b => Char.ofNat b.toNat)
+/-- The answer line for command `c` run on the index `before` (the spec's `cstep` on the ledger
+the index stands for), and the CLI's exit code for it. -/
+def answer (before : Tree) (c : LCmd ByteArray) : String × UInt32 :=
+  render (cstep (dec before.toList) (c.map toBytes)).2
 
-/-- An amount argument: one or more decimal digits (R4, D3); anything else is a usage error. -/
-def parseAmount (s : String) : Option Nat :=
-  if !s.isEmpty && s.toList.all Char.isDigit then s.toNat? else none
+/-- Write one answer line and flush it (R18: each answer is flushed as soon as it is written). -/
+def emit (out : IO.FS.Stream) (line : String) : IO Unit := do
+  out.putStrLn line
+  out.flush
 
-/-- The error code text of §3. -/
-def errText : LErr → String
-  | .badName => "BAD_NAME"
-  | .badAmount => "BAD_AMOUNT"
-  | .accountExists => "ACCOUNT_EXISTS"
-  | .unknownAccount n => s!"UNKNOWN_ACCOUNT {nameText n}"
-  | .insufficientFunds => "INSUFFICIENT_FUNDS"
-  | .balanceLimit => "BALANCE_LIMIT"
-  | .sameAccount => "SAME_ACCOUNT"
+/-- Serve: one command per line until end of input (exit 0). A line that is not a command is
+answered `ERR USAGE` and serve continues. An I/O error is answered `ERR IO` and is fail-stop
+(exit 4): after a failed write the on-disk state is unknown (R16, R18). -/
+partial def serveLoop (stdin stdout : IO.FS.Stream) (h : Handle) (fd : UInt32) : IO UInt32 := do
+  let line ← stdin.getLine
+  if line.isEmpty then return 0
+  match parseCmd (words line) with
+  | none => emit stdout "ERR USAGE"; serveLoop stdin stdout h fd
+  | some c =>
+    let res ← try
+        let (h', rs) ← (LeanKV.Core.execPick LedgerImpl.pick h [c] : RealM _).run fd
+        pure (some (h', rs))
+      catch _ => pure none
+    match res with
+    | some (h', [r]) =>
+      if r.isIOError then emit stdout "ERR IO"; return 4
+      emit stdout (answer h.index c).1
+      serveLoop stdin stdout h' fd
+    | _ => emit stdout "ERR IO"; return 4
 
-/-- The answer line (R14) and its exit code. -/
-def render : LResp → String × UInt32
-  | .ok => ("OK", 0)
-  | .balance b => (s!"BALANCE {b}", 0)
-  | .accounts l =>
-    (" ".intercalate (s!"ACCOUNTS {l.length}" :: l.map fun p => s!"{nameText p.1} {p.2}"), 0)
-  | .total t => (s!"TOTAL {t}", 0)
-  | .err e => (s!"ERR {errText e}", 1)
-
-def usageText : String :=
-  "ERR USAGE usage: ledger <dir> open NAME | deposit NAME AMOUNT | withdraw NAME AMOUNT | " ++
-  "transfer FROM TO AMOUNT | balance NAME | accounts | total"
-
-/-- Parse the command words after `<dir>`. -/
-def parseCmd : List String → Option (LCmd ByteArray)
-  | ["open", n] => some (.openAccount n.toUTF8)
-  | ["deposit", n, a] => (parseAmount a).map (.deposit n.toUTF8)
-  | ["withdraw", n, a] => (parseAmount a).map (.withdraw n.toUTF8)
-  | ["transfer", f, t, a] => (parseAmount a).map (.transfer f.toUTF8 t.toUTF8)
-  | ["balance", n] => some (.balance n.toUTF8)
-  | ["accounts"] => some .accounts
-  | ["total"] => some .total
-  | _ => none
+/-- `ledger <dir> serve` (R18): open the store once, then serve lines. A corrupt store is
+`ERR CORRUPT offset p` (exit 3, no file changed, R17); a store that cannot be opened is a line
+starting with `ERR IO` (exit 4). Nothing is read from stdin before the store is open. -/
+def serve (dir : String) : IO UInt32 := do
+  let stdout ← IO.getStdout
+  let fd ← try
+      IO.FS.createDirAll dir
+      lkvOpen (dir ++ "/leankv.log")
+    catch e =>
+      -- one line: the system's message can contain newlines
+      emit stdout ("ERR IO " ++ (toString e).map fun ch => if ch == '\n' then ' ' else ch)
+      return 4
+  match ← (LeanKV.Core.openStore : RealM _).run fd with
+  | .error (.corrupt p) => emit stdout s!"ERR CORRUPT offset {p}"; return 3
+  | .error _ => emit stdout "ERR IO open failed"; return 4
+  | .ok h => serveLoop (← IO.getStdin) stdout h fd
 
 def run (args : List String) : IO UInt32 := do
   match args with
+  | [dir, "serve"] => serve dir
   | dir :: rest =>
     let some c := parseCmd rest | IO.println usageText; return 2
     let fd ← try
@@ -78,7 +88,7 @@ def run (args : List String) : IO UInt32 := do
       match rs with
       | [r] =>
         if r.isIOError then IO.println "ERR IO write failed"; return 4
-        let (line, code) := render (cstep (dec h.index.toList) (c.map toBytes)).2
+        let (line, code) := answer h.index c
         IO.println line
         return code
       | _ => IO.println "ERR IO no reply"; return 4
