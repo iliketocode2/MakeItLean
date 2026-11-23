@@ -2,6 +2,7 @@ import MakeItLean.Gates
 import MakeItLeanTest.Bait.Spec
 import MakeItLeanTest.Bait.Good
 import MakeItLeanTest.Bait.Verified
+import MakeItLeanTest.Bait.ShellWiring
 
 /-! Negative and positive tests for every gate. The build fails if any gate stops rejecting its
 planted violations, or starts rejecting the well-formed spec. -/
@@ -29,6 +30,7 @@ error: Verified-code audit FAILED:
 MakeItLeanTest.Bait.Verified imports MakeItLeanTest.Bait.Shell
 axiom BaitVerified.trustMe used by BaitVerified.viaAxiom
 axiom sorryAx used by BaitVerified.cheat
+axiom sorryAx used by BaitVerified.hiddenSorry
 implemented_by: BaitVerified.impl
 opaque/partial: BaitVerified.loop
 unsafe: BaitVerified.uns
@@ -62,3 +64,10 @@ commands and file names are not mistaken for theorem names. -/
 
 /-- error: Trust gate: MakeItLeanTest/Bait/NO_TRUST.md does not exist (Stage 6 requires a trust manifest) -/
 #guard_msgs in #assert_trust_cites "MakeItLeanTest/Bait/NO_TRUST.md" "MakeItLeanTest/Bait"
+
+/-! The shell gate: the shell's entry point must reach the verified functions. -/
+/-- info: Shell gate: OK (BaitWiring.honestMain reaches [BaitWiring.verifiedStep]) -/
+#guard_msgs in #assert_shell_calls BaitWiring.honestMain within MakeItLeanTest (BaitWiring.verifiedStep)
+
+/-- error: Shell gate: BaitWiring.bypassMain never reaches [BaitWiring.verifiedStep] (the shell bypasses the verified code) -/
+#guard_msgs in #assert_shell_calls BaitWiring.bypassMain within MakeItLeanTest (BaitWiring.verifiedStep)

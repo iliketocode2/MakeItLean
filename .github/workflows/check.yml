@@ -1,0 +1,47 @@
+name: check
+
+# Every MakeItLean check (tests/all.sh) on every push and pull request: the framework's gates and
+# their negative tests, the anti-cheating comparator regression, LeanKV's audit, each app's
+# `mil audit` and real-file tests, and a fresh app from the template through freeze and audit.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages (bubblewrap for the comparator sandbox)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap python3
+          # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor; the comparator's
+          # bubblewrap sandbox needs them.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      - name: Install elan (the toolchain itself comes from each lean-toolchain file)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Cache the toolchain and build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.elan
+            .lake
+            lean/.lake
+            cli/.lake
+            tests/comparator-smoke/.lake
+            examples/*/.lake
+            examples/*/impl/.lake
+          key: lake-${{ hashFiles('lean-toolchain', '**/lean-toolchain', '**/lake-manifest.json') }}-${{ github.sha }}
+          restore-keys: |
+            lake-${{ hashFiles('lean-toolchain', '**/lean-toolchain', '**/lake-manifest.json') }}-
+
+      - name: All checks
+        run: tests/all.sh

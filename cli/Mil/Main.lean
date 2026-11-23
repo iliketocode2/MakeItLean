@@ -262,20 +262,25 @@ def init (name dir : String) : IO Unit := do
 /-- Module name of a source path: `Ledger/Spec/Model.lean` ↦ `Ledger.Spec.Model`. -/
 def moduleOfPath (p : String) : String := ((p.take (p.length - 5)).toString).replace "/" "."
 
-/-- The trust gate: `TRUST.md` exists and every Lean name it cites exists. The names are looked up
+/-- The trust and shell gates: `TRUST.md` exists and every Lean name it cites exists; the shell's
+`main` reaches the verified `pick` and `execPick`. The names are looked up
 in the implementation, its proofs, the shell, the solution and the spec's hole-free modules. -/
 def trust (cfg : Config) (base : FilePath) : IO Unit := do
   let impl := base / cfg.implDir
   let root := (cfg.solutionImports.head?.getD "").takeWhile (· != '.') |>.toString
   let shell := root ++ ".Shell"
   let shellOk := (← IO.Process.output { cmd := "lake", args := #["build", shell], cwd := impl }).exitCode == 0
+  unless shellOk do die s!"cannot build the shell module {shell} (the CLI entry point the audit checks)"
   let specFile := (cfg.specModule.replace "." "/") ++ ".lean"
   let specMods := (cfg.lockFiles.filter fun f => f.endsWith ".lean" && !cfg.holeFiles.contains f && f != specFile).map moduleOfPath
   let mods := cfg.solutionImports ++ [cfg.solutionModule] ++ (if shellOk then [shell] else []) ++ specMods ++ ["MakeItLean.Gates"]
   let absBase ← IO.FS.realPath base
+  let fills := (cfg.holes.map (·.2)).filter (fun t => !t.any (· == ' '))
   let file := impl / ".mil_trust.lean"
   IO.FS.writeFile file (String.join (mods.map (s!"import {·}\n")) ++
-    s!"#assert_trust_cites \"{absBase / "TRUST.md"}\" \"{absBase}\"\n")
+    s!"#assert_trust_cites \"{absBase / "TRUST.md"}\" \"{absBase}\"\n" ++
+    -- the shell must reach the filled holes (those filled by a plain name) and the substrate runner
+    s!"#assert_shell_calls main within {root} ({" ".intercalate (fills ++ ["LeanKV.Core.execPick"])})\n")
   try run "lake" #["env", "lean", ".mil_trust.lean"] impl
   finally IO.FS.removeFile file
 
@@ -290,7 +295,7 @@ def audit (cfgPath : FilePath) (allowUnfrozen : Bool) : IO Unit := do
   IO.println "== spec gates"; run "lake" #["build"] base
   IO.println "== comparator (--paranoid)"; judge cfgPath true
   IO.println "== verified-code audit"; run "lake" #["env", "lean", "audit.lean"] (base / cfg.implDir)
-  IO.println "== trust manifest"; trust cfg base
+  IO.println "== trust manifest and shell wiring"; trust cfg base
   IO.println (if ← (base / "spec.lock").pathExists then "AUDIT PASSED" else "AUDIT PASSED (UNFROZEN SPEC)")
 
 def usage : String := "usage: mil init <AppName> <dir> | solution|judge|contract|check-lock|review|audit <mil.json> | freeze <mil.json> <who> | judge --paranoid <mil.json> | audit --allow-unfrozen <mil.json>"

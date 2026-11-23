@@ -7,4 +7,6 @@ unsafe def uns (n : Nat) : Nat := n
 theorem cheat : 1 = 2 := sorry
 axiom trustMe : False
 theorem viaAxiom : 1 = 2 := trustMe.elim
+/-- A definition no theorem uses, hiding `sorry` (the audit checks definitions too). -/
+def hiddenSorry : Nat := sorry
 end BaitVerified

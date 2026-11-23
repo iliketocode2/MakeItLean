@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"$CLAUDE_PROJECT_DIR/tools/hooks/guard_locked.py\"",
+            "timeout": 20,
+            "statusMessage": "Checking frozen spec files"
+          },
+          {
+            "type": "command",
+            "command": "python3 -I \"$CLAUDE_PROJECT_DIR/tools/hooks/guard_role.py\"",
+            "timeout": 20,
+            "statusMessage": "Checking agent role permissions"
+          }
+        ]
+      }
+    ]
+  }
+}

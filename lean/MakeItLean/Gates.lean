@@ -193,6 +193,7 @@ compiles to), `@[implemented_by]` or `@[extern]`; and no such module imports a m
   let verified (m : Name) := pfxs.any (·.isPrefixOf m)
   let mut bad := #[]
   let mut nThm := 0
+  let mut nDef := 0
   for (n, ci) in env.constants.toList do
     let some m := moduleOf env n | continue
     unless verified m do continue
@@ -201,8 +202,10 @@ compiles to), `@[implemented_by]` or `@[extern]`; and no such module imports a m
     if ci matches .opaqueInfo _ then bad := bad.push s!"opaque/partial: {n}"
     if isExtern env n then bad := bad.push s!"extern: {n}"
     if (Compiler.implementedByAttr.getParam? env n).isSome then bad := bad.push s!"implemented_by: {n}"
-    if ci matches .thmInfo _ then
-      nThm := nThm + 1
+    -- Theorems *and* definitions: a definition no theorem uses (say, a helper only the shell
+    -- calls) could otherwise hide `sorry` or `native_decide` (`Lean.ofReduceBool`).
+    if ci matches .thmInfo _ || ci matches .defnInfo _ then
+      if ci matches .thmInfo _ then nThm := nThm + 1 else nDef := nDef + 1
       for a in ← liftCoreM (collectAxioms n) do
         unless standardAxioms.contains a do bad := bad.push s!"axiom {a} used by {n}"
   for i in [0:env.header.moduleNames.size] do
@@ -211,7 +214,34 @@ compiles to), `@[implemented_by]` or `@[extern]`; and no such module imports a m
       for imp in env.header.moduleData[i]!.imports do
         if shell.isPrefixOf imp.module then bad := bad.push s!"{m} imports {imp.module}"
   if bad.isEmpty then
-    logInfo m!"Verified-code audit: OK ({nThm} theorems on standard axioms; no unsafe/partial/opaque/implemented_by/extern; {shell} not imported)"
+    logInfo m!"Verified-code audit: OK ({nThm} theorems and {nDef} definitions on standard axioms; no unsafe/partial/opaque/implemented_by/extern; {shell} not imported)"
   else throwError m!"Verified-code audit FAILED:\n{"\n".intercalate (bad.qsort (· < ·)).toList}"
+
+syntax (name := assertShellCalls) "#assert_shell_calls " ident " within " ident " (" ident* ")" : command
+
+/-- `#assert_shell_calls main within Root (f g …)`: the trusted shell's entry point reaches every
+listed verified function (for example the filled hole `CounterImpl.pick` and `LeanKV.Core.execPick`)
+through code in modules under `Root`. Catches a shell that bypasses the verified core entirely;
+it cannot show the shell uses the results correctly (that is what the CLI tests are for). -/
+@[command_elab assertShellCalls] def elabAssertShellCalls : CommandElab := fun stx => do
+  let entry := stx[1].getId
+  let root := stx[3].getId
+  let want := stx[5].getArgs.map (·.getId)
+  let env ← getEnv
+  if (env.find? entry).isNone then throwError "Shell gate: entry point {entry} not found"
+  let mut seen : Std.HashSet Name := {}
+  let mut todo := [entry]
+  while !todo.isEmpty do
+    let n := todo.head!
+    todo := todo.tail!
+    if seen.contains n then continue
+    seen := seen.insert n
+    let inApp := match moduleOf env n with | some m => root.isPrefixOf m | none => n == entry
+    unless inApp do continue
+    if let some ci := env.find? n then
+      if let some v := ci.value? then todo := v.getUsedConstants.toList ++ todo
+  let missing := want.filter (!seen.contains ·)
+  if missing.isEmpty then logInfo m!"Shell gate: OK ({entry} reaches {want.toList})"
+  else throwError m!"Shell gate: {entry} never reaches {missing.toList} (the shell bypasses the verified code)"
 
 end MakeItLean

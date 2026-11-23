@@ -55,7 +55,7 @@ Never skip a gate. Stages 0 and 2 end with **the user's explicit approval**. Ask
 9. **Record friction.** Keep `examples/<app>/FRICTION.md`: every time the framework, Lean or these instructions slowed you down, add a row (date, stage, what happened, what would have helped).
 
 ## Roles
-In one session you play all five; keep them separate in your head.
+Each role is a Claude Code subagent in `.claude/agents/` (`mil-spec-author`, `mil-spec-critic`, `mil-implementer`, `mil-prover`, `mil-auditor`). Write access is **enforced** by project hooks (`.claude/settings.json`): `tools/hooks/guard_role.py` lets each role write only its own area of `examples/<app>/` (spec, critic, impl, proofs, trust; `FRICTION.md` is shared), and `tools/hooks/guard_locked.py` blocks every agent, roles or not, from editing a file listed in a `spec.lock`. A blocked write is final: stop and report, never work around it. When one session plays every role instead, keep them separate in your head:
 - **Spec author:** turns approved requirements into the model, layout, `pickRef` and theorem statements.
 - **Spec critic:** tries to break the spec. Vacuous statements, missing cases, user data that imitates the format, bounds that are never stated. Writes wrong implementations the spec must reject.
 - **Implementer:** writes the fast code, mirroring the reference function by function so the proof is a correspondence.
