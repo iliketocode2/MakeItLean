@@ -20,6 +20,9 @@ check() {
   else echo "FAILED: $*"; tail -40 "$log"; rm -f "$log"; exit 1; fi
 }
 
+step "0. Every lakefile require names a tracked path (else a fresh clone does not build)"
+check 'check_requires:' python3 -I "$ROOT/tools/check_requires.py"
+
 step "1. Framework gates and their negative tests (lean/)"
 check 'Build completed' bash -c "cd '$ROOT/lean' && lake build"
 
@@ -47,6 +50,8 @@ if [ $QUICK -eq 0 ]; then
   check 'passed|consistent|agree' "$ROOT/examples/counter/impl/test.sh"
 
   step "7b. Ledger serve mode and HTTP API against the model (Phase 3: V1-V6, V8)"
+  # serve_test.sh expects both binaries already built (a fresh CI checkout has neither)
+  check 'Build completed' bash -c "cd '$ROOT/examples/ledger/impl' && lake build ledgerCli ledgerOracle"
   check 'passed|consistent|agree|reach|replay' "$ROOT/examples/ledger/impl/tests/serve_test.sh"
   if ! node -e 'process.exit(+process.versions.node.split(".")[0] >= 24 ? 0 : 1)' 2>/dev/null; then
     echo "FAILED: the HTTP tests need Node.js 24 or later on PATH"; exit 1
