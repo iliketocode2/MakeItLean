@@ -48,6 +48,20 @@ The shell is trusted, not proven. Keep it thin, and check it against the model:
 ## Changing a frozen app's requirements
 A new feature for a frozen app (a server mode, a new shell) starts at **Stage 0 again**: bump `REQUIREMENTS.md` to the next version (vN+1, DRAFT), mark what changes (new requirement IDs; a reversed non-goal struck out, not deleted), and get the user's approval. If the change needs **no spec change** (new shells, new tests), the spec stays frozen and `spec.lock` is untouched. If it **does** need a spec change, that is a new spec version: Stage 1–2 again, a new sign-off, and a new lock (keep the old one as `spec.lock.vN`). Never edit a frozen file in place.
 
+## Versions
+`mil.json`'s `framework_version` is the framework version the spec was approved under; `mil` refuses
+an app newer than itself or older than it supports (docs/COMPATIBILITY.md). Never edit it, and never
+run `mil upgrade --apply` without the user: an upgrade changes locked files, so the spec needs a new
+sign-off.
+
+## Libraries (`mil init --lib`)
+A library's spec gives a **reference implementation** of each function (the simplest correct code)
+and properties that relate them. Each function is one hole, and its obligation is equality with its
+reference (`Impl.f x = f x`), possibly under a precondition the spec proves is kept (the template's
+`member` stops early because sets stay ascending: `ascending_insertSorted`). A faster implementation
+is allowed when it is proven equal. A library has no shell, so no self-test. Worked example: the
+template itself (`templates/lib/`).
+
 ## Workflow: stages and gates
 Never skip a gate. Stages 0 and 2 end with **the user's explicit approval**. Ask, and wait.
 
@@ -83,6 +97,9 @@ Each role is a Claude Code subagent in `.claude/agents/` (`mil-spec-author`, `mi
 ## Commands
 ```
 mil init <App> examples/<app>            # Stage 0: create the app from the template (a working counter)
+mil init --lib <Lib> examples/<lib>      #   or a library of related functions (each equal to a reference)
+mil init --pure <Fn> examples/<fn>       #   or one pure function (precondition and postcondition)
+mil check examples/<app>/mil.json        # Stages 1-4: the fast loop (audit minus lock, --paranoid, selftest)
 mil review examples/<app>/mil.json       # Stage 2: SPEC_REVIEW.md for the user
 mil freeze examples/<app>/mil.json <who> # Stage 2: after sign-off
 mil check-lock examples/<app>/mil.json
@@ -90,4 +107,5 @@ mil contract examples/<app>/mil.json     # holes and obligations in the spec = m
 mil selftest examples/<app>/mil.json     # Stage 5: the shell against the model, with mutants mil chooses
 mil judge examples/<app>/mil.json        # Stage 4: contract check, then the comparator's verdict
 mil audit examples/<app>/mil.json        # Stage 6: everything (needs spec.lock; --allow-unfrozen for dev runs)
+mil upgrade examples/<app>/mil.json      # only on the user's word: moves an app to a new framework version (a new sign-off)
 ```

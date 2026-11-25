@@ -1,0 +1,35 @@
+{
+  "kind": "pure",
+  "spec_module": "AppName.Spec",
+  "hole_files": [
+    "AppName/Spec/Contract.lean"
+  ],
+  "impl_dir": "impl",
+  "solution_module": "AppNameSol.Holes",
+  "solution_imports": [
+    "AppNameImpl.Proofs"
+  ],
+  "holes": [
+    "AppName.Spec.Impl.insertSorted",
+    "AppName.Spec.Impl.member",
+    "AppName.Spec.Impl.size"
+  ],
+  "obligations": [
+    "AppName.Spec.impl_insertSorted_ok",
+    "AppName.Spec.impl_member_ok",
+    "AppName.Spec.impl_size_ok"
+  ],
+  "lock_files": [
+    "AppName/Spec.lean",
+    "AppName/Spec/Model.lean",
+    "AppName/Spec/Properties.lean",
+    "AppName/Spec/Contract.lean"
+  ],
+  "audit": {
+    "verified": [
+      "AppNameImpl.Core",
+      "AppNameImpl.Proofs"
+    ],
+    "shell": []
+  }
+}

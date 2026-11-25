@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Run a command in the MakeItLean container, with the current directory mounted at /work.
+#   tools/mil-docker mil doctor
+#   tools/mil-docker mil audit mil.json
+#   tools/mil-docker                     # an interactive shell
+# Build the image first: docker build -t makeitlean <MakeItLean checkout>
+# MIL_IMAGE picks another image name. Only the sandbox's user namespaces are allowed (seccomp and
+# AppArmor unconfined for bubblewrap); the container is not privileged.
+set -euo pipefail
+IMAGE="${MIL_IMAGE:-makeitlean}"
+TTY=(); [ -t 0 ] && [ -t 1 ] && TTY=(-it)
+exec docker run --rm "${TTY[@]}" \
+  --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+  -v "$PWD":/work -w /work \
+  ${MIL_GIT_URL:+-e MIL_GIT_URL="$MIL_GIT_URL"} ${MIL_GIT_REV:+-e MIL_GIT_REV="$MIL_GIT_REV"} \
+  "$IMAGE" "${@:-bash}"

@@ -1,0 +1,8 @@
+**/.lake
+**/node_modules
+**/__pycache__
+**/.mil
+bench/verina/runs
+bench/z*
+examples/z*
+background

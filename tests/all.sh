@@ -62,7 +62,8 @@ if [ $QUICK -eq 0 ]; then
   APP="$ROOT/examples/ztemplatecheck"
   PAPP="$ROOT/bench/ztemplatecheck/zpurecheck"   # deeper than examples/: exercises MIL_ROOT
   EXT="$(mktemp -d -t mil-ext-XXXXXX)"   # step 9: apps outside the checkout
-  restore() { rm -rf "$APP" "$ROOT/bench/ztemplatecheck" "$EXT"; }
+  UPG="$ROOT/examples/zupgrade"          # step 8e: an app moved forward by `mil upgrade`
+  restore() { rm -rf "$APP" "$ROOT/bench/ztemplatecheck" "$EXT" "$UPG"; }
   trap restore EXIT
   check 'created' bash -c "cd '$ROOT' && '$MIL' init Ztemplatecheck examples/ztemplatecheck"
   check 'ACCEPTED' "$MIL" judge "$APP/mil.json"
@@ -104,6 +105,55 @@ PY
 
   step "8d. The cheat suite: every known way to a false AUDIT PASSED is rejected (Phase 6 W0)"
   check 'control:|cheat rejected|cheats:' "$ROOT/tests/cheats/run.sh"
+
+  step "8e. Usable by others: --lib template, versions, mil upgrade, mil check, mil doctor (Phase 6 W-U)"
+  LAPP="$ROOT/bench/ztemplatecheck/zlibcheck"
+  check 'created' bash -c "cd '$ROOT' && '$MIL' init --lib Zlibcheck bench/ztemplatecheck/zlibcheck"
+  check 'CHECK PASSED' "$MIL" check "$LAPP/mil.json"
+  check 'ACCEPTED' "$MIL" judge "$LAPP/mil.json"
+  check 'Frozen' "$MIL" freeze "$LAPP/mil.json" ci-template-check
+  check 'AUDIT' "$MIL" audit "$LAPP/mil.json"
+  # versions: an app for a newer framework, and one for an unsupported older one, are refused
+  VAPP="$ROOT/bench/ztemplatecheck/zvercheck"; cp -a "$LAPP" "$VAPP"; rm -f "$VAPP/spec.lock"
+  setver() { python3 -I -c "import json,sys; f=sys.argv[1]; j=json.load(open(f)); j['framework_version']=sys.argv[2]; json.dump(j,open(f,'w'),indent=2)" "$VAPP/mil.json" "$1"; }
+  setver 99.0.0
+  if "$MIL" judge "$VAPP/mil.json" >/tmp/mil-ver.$$ 2>&1 || ! grep -q 'update the framework checkout' /tmp/mil-ver.$$; then echo "FAILED: an app for a newer framework was not refused"; cat /tmp/mil-ver.$$; exit 1; fi
+  setver 0.0.1
+  if "$MIL" judge "$VAPP/mil.json" >/tmp/mil-ver.$$ 2>&1 || ! grep -q 'mil upgrade' /tmp/mil-ver.$$; then echo "FAILED: an app for an unsupported framework was not refused"; cat /tmp/mil-ver.$$; exit 1; fi
+  rm -f /tmp/mil-ver.$$; echo "versions: newer and unsupported framework versions refused"
+  # mil check catches the W0 cheat (compiled code differs from the proven body)
+  setver "$(cat "$ROOT/VERSION")"
+  python3 -I - "$VAPP/impl/ZlibcheckImpl/Core.lean" <<'PY2'
+import sys; f = sys.argv[1]; s = open(f).read()
+o = "def size (s : NatSet) : Nat := s.length"
+assert o in s
+open(f, "w").write(s.replace(o, "def sizeFast (_s : NatSet) : Nat := 0\n\n@[implemented_by sizeFast]\n" + o))
+PY2
+  if "$MIL" check "$VAPP/mil.json" >/tmp/mil-chk.$$ 2>&1 || ! grep -q 'implemented_by: ZlibcheckImpl.size' /tmp/mil-chk.$$; then echo "FAILED: mil check missed an implemented_by cheat"; tail -20 /tmp/mil-chk.$$; exit 1; fi
+  rm -f /tmp/mil-chk.$$; echo "mil check: implemented_by cheat rejected"
+  # mil upgrade: Counter as it was before W0 (no framework_version, audit or selftest sections; its
+  # own impl/audit.lean) is moved forward, and gets exactly Counter's sections
+  legacy() {
+    rm -rf "$UPG"; cp -a "$ROOT/examples/counter" "$UPG"; rm -rf "$UPG/impl/.mil"
+    python3 -I -c "import json,sys; f=sys.argv[1]; j=json.load(open(f)); [j.pop(k) for k in ('framework_version','audit','selftest')]; json.dump(j,open(f,'w'),indent=2)" "$UPG/mil.json"
+    git -C "$ROOT" show 79d2de9:examples/counter/impl/audit.lean > "$UPG/impl/audit.lean"
+  }
+  legacy
+  check 'Dry run' "$MIL" upgrade "$UPG/mil.json"
+  check 'Applied' "$MIL" upgrade --apply "$UPG/mil.json"
+  python3 -I - "$UPG/mil.json" "$ROOT/examples/counter/mil.json" <<'PY2'
+import json, sys; a, b = (json.load(open(p)) for p in sys.argv[1:])
+bad = [k for k in ("framework_version", "audit", "selftest") if a.get(k) != b.get(k)]
+if bad: print(f"FAILED: mil upgrade derived different {bad}"); sys.exit(1)
+print("mil upgrade: derived sections equal Counter's")
+PY2
+  check 'CHECK PASSED' "$MIL" check "$UPG/mil.json"
+  legacy
+  check 'Frozen' "$MIL" freeze "$UPG/mil.json" ci-legacy
+  check 'Applied' "$MIL" upgrade --apply "$UPG/mil.json"
+  [ -f "$UPG/spec.lock.v1" ] && [ ! -e "$UPG/spec.lock" ] || { echo "FAILED: mil upgrade did not keep the old lock as spec.lock.v1"; exit 1; }
+  echo "mil upgrade: the old lock kept as spec.lock.v1; a new sign-off is needed"
+  check 'doctor:' "$MIL" doctor
 
   step "9. Apps outside the checkout: framework by pinned git require (this checkout's HEAD)"
   # Only committed framework code reaches these apps (they clone HEAD): CI tests exactly the commit.

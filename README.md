@@ -17,12 +17,18 @@ A framework that lets AI coding agents build applications **spec-first in Lean 4
     redefined spec definitions.
   - For Claude Code, hooks block edits to frozen files and keep each agent role to its own files.
 
-Status: research prototype. See [docs/PLAN.md](docs/PLAN.md) for the design and
-[docs/PHASE5.md](docs/PHASE5.md) for current work.
+Status: research prototype, version 0.6.0 ([versions and compatibility](docs/COMPATIBILITY.md)).
+
+**New here? Read [docs/GUIDE.md](docs/GUIDE.md)**: installing, choosing a template, the two
+approvals only you can give, and what to do when `mil` fails. What an audit does and does not
+guarantee: [docs/GUARANTEES.md](docs/GUARANTEES.md). The design is in [docs/PLAN.md](docs/PLAN.md),
+current work in [docs/PHASE6.md](docs/PHASE6.md).
 
 ## Install
 
-Linux or WSL (native Windows Lean is blocked by Smart App Control).
+Linux or WSL natively (native Windows Lean is blocked by Smart App Control), or anywhere with
+Docker through the container: `docker build -t makeitlean .`, then `tools/mil-docker <command>` in
+your project ([guide](docs/GUIDE.md#1-install)).
 
 ```bash
 # Lean (elan); each project pins v4.36.0 in lean-toolchain
@@ -34,6 +40,7 @@ sudo apt-get install -y bubblewrap python3
 git clone https://github.com/iliketocode2/MakeItLean.git ~/MakeItLean
 cd ~/MakeItLean/cli && lake build          # builds `mil`
 export PATH="$HOME/MakeItLean/cli/.lake/build/bin:$PATH"
+mil doctor                                 # checks everything above, prints the fix for what is missing
 ```
 
 `mil` finds the framework from where it was built. Set `MIL_HOME` to use another checkout.
@@ -43,8 +50,9 @@ export PATH="$HOME/MakeItLean/cli/.lake/build/bin:$PATH"
 Anywhere outside the checkout (your own repository):
 
 ```bash
-mil init --agent claude MyApp myapp         # an app on the LeanKV durable store
+mil init --lib --agent claude MyLib mylib    # a library of related functions
 mil init --pure --agent codex MyFn myfn     # one pure function
+mil init --agent claude MyApp myapp         # a command-line app on the LeanKV durable store
 ```
 
 - **The framework comes by git.** The app's lakefiles require the framework by git URL, pinned to
@@ -65,15 +73,17 @@ Then follow the stages in [agents/AGENTS.md](agents/AGENTS.md):
 |---|---|---|
 | 0 | Requirements (`REQUIREMENTS.md`) | the user approves them |
 | 1–2 | The spec, critic, review and sign-off | `mil review`, then `mil freeze mil.json <who>` |
-| 3–4 | Implementation and proofs | `mil judge mil.json` |
+| 3–4 | Implementation and proofs | `mil check mil.json` (fast loop), `mil judge mil.json` |
 | 5–6 | Shell, tests, self-test, audit and `TRUST.md` | `mil selftest mil.json`, then `mil audit mil.json` |
 
 ## Commands
 
 ```
-mil init [--pure] [--agent claude|codex] <AppName> <dir>
-mil review | contract | solution | judge [--paranoid] | check-lock | selftest | audit [--allow-unfrozen] <app>/mil.json
+mil init [--pure|--lib] [--agent claude|codex] <AppName> <dir>
+mil check | review | contract | solution | judge [--paranoid] | check-lock | selftest | audit [--allow-unfrozen] <app>/mil.json
 mil freeze <app>/mil.json <who>
+mil upgrade [--apply] <app>/mil.json        move an app to this framework version
+mil doctor | --version
 mil comparator [--paranoid] <impl_dir> <config.json>
 ```
 
@@ -86,11 +96,12 @@ app's packages, deleted afterwards (`MIL_KEEP_JUDGE=1` keeps it).
 |---|---|
 | `lean/` | gates (English docs, holes, spec axioms, contract, verified-code audit) and the review generator |
 | `cli/` | `mil`, in plain Lean with no dependencies |
-| `templates/` | app templates: `app/` (LeanKV substrate) and `pure/` |
+| `templates/` | app templates: `lib/` (library), `pure/` (one function), `app/` (LeanKV substrate) |
 | `agents/AGENTS.md`, `.claude/` | agent workflow, roles, guard hooks (`tools/hooks/`) |
 | `examples/` | LeanKV (the durable substrate), Counter, Ledger (with a TypeScript HTTP shell) |
 | `knowledge/` | Lean 4.36 idioms and an index of reusable lemmas |
-| `tests/all.sh` | every check (CI runs it) |
+| `tests/all.sh` | every check (CI runs it); `tests/cheats/`: every known way to a false AUDIT PASSED, each rejected |
+| `Dockerfile`, `tools/mil-docker` | the container |
 
 ## License
 

@@ -11,8 +11,12 @@ kind, and agents build it spec-first in Lean, proven against the approved spec, 
 the spec's reference where a proof allows it (welcome, not required). It ends with the list of
 what stops that today, which becomes Phase 7.
 
-Order: **W0 → W1 → W2 → W3.** W0 fixes the confirmed hole and is useful on its own if the budget
-runs out after it.
+Order: **W0 → W1 → W-U**, then W2 and W3 when agent budget allows. W0 fixes the confirmed hole and is
+useful on its own if the budget runs out after it.
+
+**Paused (2026-11-25, user): W2 and W3**, which need agent runs; the user's Codex budget is used up
+for the week. Their designs below are unchanged. In their place, **W-U** makes the framework usable
+by other developers (below; plan approved by the user).
 
 ## Problems being fixed
 | # | Problem | Evidence | Work item |
@@ -179,6 +183,17 @@ if it stops a whole kind of program or appears in two briefs.
 the gap list are in this file; **a Phase 7 plan is drafted from the framework gaps**, ordered by how
 many kinds of program each one unblocks.
 
+## W-U: usable by other developers (no agent runs needed)
+From the review "what would another developer need tomorrow?":
+1. **Versions** (`VERSION`, `framework_version` in `mil.json`, a version check in judge/check/audit,
+   `mil upgrade`, `mil --version`, [COMPATIBILITY.md](COMPATIBILITY.md)). First, because every later
+   change to the audit contract costs more without it.
+2. **`mil doctor`**: every requirement checked, each failure with its fix.
+3. **`mil check`**: the fast development loop (the audit minus lock, `--paranoid` and self-test).
+4. **`mil init --lib`**: a library of related functions, each equal to a reference implementation.
+5. **The container** (`Dockerfile`, `tools/mil-docker`) for macOS, Windows, or an unchanged host.
+6. **Docs for humans**: [GUIDE.md](GUIDE.md), [GUARANTEES.md](GUARANTEES.md), the README.
+
 ## Also in this phase (small, any time after W0)
 - **Toolchain bump procedure** (promised in PLAN.md, never written): a script that bumps every
   `lean-toolchain`, rebuilds, and runs `all.sh`; one real bump as its test. A frozen app's
@@ -339,3 +354,44 @@ many kinds of program each one unblocks.
   - **Not done in W1:** mutating a non-Lean shell (Ledger's TypeScript HTTP layer keeps its own
     hand-written planted-bug test); a `selftest.json` that `TRUST.md` cites by run (the audit
     reruns the self-test instead).
+- 2026-11-25, **W-U (uncommitted).** W2 and W3 paused (Codex budget); plan approved by the user.
+  - **Versions:** `VERSION` (0.6.0); `mil init` writes `framework_version` into `mil.json` (locked);
+    `frameworkCheck` in judge/check/audit refuses an app for a newer framework ("update the
+    framework checkout") or one older than `minSupported` ("run `mil upgrade`"), and an external app
+    whose pinned framework's `VERSION` disagrees with its `mil.json` (checked: the git clone at
+    `.lake/packages/makeitlean/` is the repository root). No `framework_version`: legacy rules plus a
+    warning (Ledger). No change to `Gates.lean`, so old pins stay valid. `mil --version`.
+    [COMPATIBILITY.md](COMPATIBILITY.md): the policy and the 0.6.0 release notes.
+  - **`mil upgrade [--apply]`:** sets `framework_version`, derives a missing `audit` section (type
+    names parsed from a legacy `impl/audit.lean`) and `selftest` defaults, moves an external app's
+    pin, keeps `spec.lock` as `spec.lock.v<N>`, lists what the roles must do. Tested on Counter
+    reverted to its pre-W0 shape (old `audit.lean` from `79d2de9`): the derived sections equal
+    Counter's, and `mil check` passes.
+  - **`mil doctor`:** framework, lake (probed from `MIL_HOME`: elan's `lake` needs a
+    `lean-toolchain`), toolchain, bubblewrap and a sandbox probe that also needs `/run/user/<uid>`,
+    python3 ≥ 3.8, git, node ≥ 24 (optional), whether the framework commit is pushed. FAIL path
+    checked with `bwrap` off `PATH`.
+  - **`mil check`:** shares its steps with `audit` (`sharedSteps`), minus the lock, `--paranoid` and the
+    self-test: Counter 61 s (audit about 5 min), the library 34 s. Catches the W0 `implemented_by`
+    cheat (all.sh 8e).
+  - **`mil init --lib`** (`templates/lib/`): a sorted set of naturals with reference
+    `insertSorted`, `member`, `size`; obligations `Impl.f = f`; `member`'s implementation stops early,
+    licensed by `Ascending` and the proven `ascending_insertSorted`. Fresh app: init to strict AUDIT
+    PASSED in about a minute.
+  - **`mil` bug found by the library template, fixed:** `fillSorry` found a hole by any spaced
+    mention of its name, so an obligation stated as `Impl.f x = f x` (which names the hole) made it
+    fail. It now anchors on the `def`/`theorem` header (the PHASE5 P9 weakness, now a real case).
+  - **Container:** `Dockerfile` (Ubuntu 24.04, elan, the toolchain, bubblewrap, python3, Node 24,
+    `mil`, non-root user) and `tools/mil-docker`. **Found by testing it:** the comparator's sandbox
+    mounts `/run/user/<uid>`, which a bare container lacks; `mil judge` showed only "REJECTED: error:
+    Child exited with 1" because it filtered out the `bwrap:` line. Fixed: the image creates the
+    directory; `mil` reports a sandbox failure as "no verdict: the environment failed, not the
+    proofs" with the `bwrap:` line; `mil doctor` probes the directory. In the container: doctor
+    ready, a pure app from `init` to AUDIT PASSED in about 2 min. Image 4.9 GB. Docker Desktop on
+    macOS not tested.
+  - **Docs for humans:** [GUIDE.md](GUIDE.md) (install, templates, the two approvals with
+    checklists, the dev loop, upgrading, a "when `mil` fails" table), [GUARANTEES.md](GUARANTEES.md)
+    (statuses, every check and what it prevents, the trust base, known limits), README and
+    AGENTS.md updated.
+  - **Also:** `milHome` no longer fails when the running `mil` binary was replaced (found when a
+    rebuild during a test run broke the self-test step).

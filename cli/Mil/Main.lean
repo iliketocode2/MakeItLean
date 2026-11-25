@@ -3,9 +3,10 @@ import Lean.Data.Json
 /-!
 # `mil` — the MakeItLean CLI
 
-    mil init [--pure] [--agent claude|codex] <AppName> <dir>
-                                      create an app from templates/app (on the LeanKV substrate)
-                                      or templates/pure (one pure function)
+    mil init [--pure|--lib] [--agent claude|codex] <AppName> <dir>
+                                      create an app from templates/app (on the LeanKV substrate),
+                                      templates/pure (one pure function) or templates/lib (a
+                                      library of related functions, each equal to a reference)
     mil solution <app>/mil.json       generate the comparator solution module from the hole files
     mil judge <app>/mil.json          build, then `lake comparator` in a staged judge workspace
                                       (a temporary copy of only this app's packages)
@@ -15,7 +16,13 @@ import Lean.Data.Json
     mil check-lock <app>/mil.json     verify the frozen spec is unchanged
     mil review <app>/mil.json         generate SPEC_REVIEW.md from the elaborated spec
     mil contract <app>/mil.json       the spec's holes and obligations are exactly mil.json's
+    mil check <app>/mil.json          the development loop: audit's checks minus the lock, --paranoid
+                                      and the self-test (never a release check)
     mil selftest <app>/mil.json       Stage 5: the shell against the model, with mutants mil chooses
+    mil upgrade [--apply] <app>/mil.json
+                                      move an app to this framework version (dry run by default)
+    mil doctor                        is this machine ready? (each check: PASS, WARN or FAIL with the fix)
+    mil --version                     this framework's version and commit
     mil audit <app>/mil.json          lock (required), spec gates, spec critic, contract, comparator
                                       --paranoid, verified-code audit, self-test, trust manifest
                                       (`--allow-unfrozen` for development runs)
@@ -96,6 +103,9 @@ structure Config where
   audit : Option AuditCfg := none
   /-- The self-test's settings (`selftest` in `mil.json`, optional; defaults otherwise). -/
   selftest : SelftestCfg := {}
+  /-- The framework version the app was created or upgraded for (`framework_version`; locked).
+  Absent: an app from before versioning (legacy rules, with a warning). -/
+  frameworkVersion : Option String := none
   deriving Inhabited
 
 def die {α} (msg : String) : IO α := throw (IO.userError msg)
@@ -173,7 +183,8 @@ def loadConfig (path : FilePath) : IO Config := do
            solutionImports := ← getList j "solution_imports",
            holes := ← getFills j "holes" fill fillPath,
            obligations := ← getFills j "obligations" fill fillPath, lockFiles := ← getList j "lock_files",
-           pure := isPure, audit, selftest }
+           pure := isPure, audit, selftest,
+           frameworkVersion := (j.getObjValAs? String "framework_version").toOption }
 
 /-- Run a command, streaming its output; fail if it fails. -/
 def run (cmd : String) (args : Array String) (cwd : Option FilePath := none) : IO Unit := do
@@ -192,11 +203,13 @@ the declaration is written inside its `namespace`. -/
 def shortName (full : String) (ns : String) : String :=
   if full.startsWith (ns ++ ".") then (full.drop (ns.length + 1)).toString else full
 
-/-- Replace the body `sorry` of declaration `decl` (the first `sorry` after its name). -/
+/-- Replace the body `sorry` of declaration `decl` (the first `sorry` after its `def`/`theorem`
+header). Anchored on the header, not on any mention: an obligation's statement names its hole
+(`Impl.f x = f x`), and that mention must not be taken for the declaration. -/
 def fillSorry (src decl term : String) : IO String := do
-  let keys := [s!" {decl} ", s!" {decl}\n"]
+  let keys := ["def", "theorem"].flatMap fun kw => [s!"{kw} {decl} ", s!"{kw} {decl}\n", s!"{kw} {decl} :"]
   let some key := keys.find? (fun k => (src.splitOn k).length == 2)
-    | die s!"hole file: declaration `{decl}` not found exactly once"
+    | die s!"hole file: no single `def {decl}` or `theorem {decl}` declaration"
   match src.splitOn key with
   | [before, after] =>
     match after.splitOn "sorry" with
@@ -236,6 +249,42 @@ partial def findRoot (d : FilePath) : IO FilePath := do
   match d.parent with
   | some p => if p == d then die "no MakeItLean checkout found" else findRoot p
   | none => die "no MakeItLean checkout found (a directory with lean/MakeItLean/Gates.lean above this one)"
+
+/-- The framework checkout (`MIL_HOME`): the environment variable if set, else the checkout this
+`mil` binary was built in (`<home>/cli/.lake/build/bin/mil`), else the nearest enclosing checkout. -/
+def milHome : IO FilePath := do
+  let ok (h : FilePath) : IO Bool := (h / "lean" / "MakeItLean" / "Gates.lean").pathExists
+  if let some h ← IO.getEnv "MIL_HOME" then
+    let h ← IO.FS.realPath h
+    if ← ok h then return h
+    die s!"MIL_HOME={h} is not a MakeItLean checkout (no lean/MakeItLean/Gates.lean)"
+  -- the binary's own path can fail to resolve (a rebuilt `mil` leaves a running one "(deleted)")
+  if let some exe ← (try some <$> IO.FS.realPath (← IO.appPath) catch _ => Pure.pure none) then
+    if let some h := exe.parent >>= (·.parent) >>= (·.parent) >>= (·.parent) >>= (·.parent) then
+      if ← ok h then return h
+  findRoot (← IO.currentDir)
+
+/-- A version `a.b.c` as numbers, for comparison (missing parts are 0). -/
+def parseVersion (v : String) : List Nat :=
+  let ns := (v.trimAscii.toString.splitOn ".").map (·.toNat?.getD 0)
+  ns ++ List.replicate (3 - min 3 ns.length) 0
+
+/-- `a < b` for versions. -/
+def versionLt (a b : String) : Bool :=
+  let rec go : List Nat → List Nat → Bool
+    | x :: xs, y :: ys => x < y || (x == y && go xs ys)
+    | _, _ => false
+  go (parseVersion a) (parseVersion b)
+
+/-- The oldest app framework version this `mil` audits. Raised when the audit contract changes in
+a way older apps do not meet (docs/COMPATIBILITY.md); such apps move forward with `mil upgrade`. -/
+def minSupported : String := "0.6.0"
+
+/-- This framework's version (`MIL_HOME/VERSION`). -/
+def milVersion : IO String := do
+  let f := (← milHome) / "VERSION"
+  unless ← f.pathExists do die s!"{f} is missing: this framework checkout has no version"
+  return (← IO.FS.readFile f).trimAscii.toString
 
 /-- The path components of an absolute path. -/
 def comps (p : FilePath) : List String := p.toString.splitOn "/" |>.filter (· != "")
@@ -379,13 +428,16 @@ def stagedComparator (implDir : FilePath) (judgeCfg : Json) (paranoid : Bool) : 
     quiet (#["build"] ++ mods.toArray)
     let args := #["comparator", "--config=judge.json"] ++ (if paranoid then #["--paranoid"] else #[])
     let out ← IO.Process.output { cmd := "lake", args, cwd := stage }
-    let errs := ((out.stdout ++ out.stderr).splitOn "\n").filter (·.startsWith "error")
+    let all := (out.stdout ++ out.stderr).splitOn "\n"
+    let errs := all.filter (·.startsWith "error")
+    -- a sandbox that could not start prints `bwrap: …` and a bare "Child exited": no verdict
+    let envFail := errs.all (·.startsWith "error: Child exited") || all.any (·.startsWith "bwrap:")
     if out.exitCode == 0 then IO.println "ACCEPTED: all obligations proven against the spec"
-    else if errs.isEmpty then
+    else if errs.isEmpty || envFail then
       -- no verdict lines: usually the sandbox or the environment, not the proofs (Experiment B:
       -- bubblewrap blocked inside Codex's sandbox printed only a generic child failure)
       let lines := ((out.stdout ++ out.stderr).splitOn "\n").filter (!·.isEmpty)
-      die ("REJECTED (no error lines: check the environment, e.g. bubblewrap; MIL_KEEP_JUDGE=1 keeps the stage). Comparator output ends:\n"
+      die ("REJECTED, but with no verdict: the checker's sandbox or environment failed, not the proofs. Run `mil doctor`; MIL_KEEP_JUDGE=1 keeps the stage. Comparator output ends:\n"
         ++ "\n".intercalate (lines.drop (lines.length - 25)))
     else die ("REJECTED:\n" ++ "\n".intercalate errs)
   finally
@@ -403,10 +455,31 @@ def contract (cfgPath : FilePath) : IO Unit := do
   try run "lake" #["env", "lean", ".mil_contract.lean"] base
   finally IO.FS.removeFile file
 
+/-- The app's framework version against this `mil` (docs/COMPATIBILITY.md). An app newer than
+`mil` is refused (update the framework checkout); one older than `minSupported` is refused (run
+`mil upgrade`). An external app's pinned framework must be the version its `mil.json` names. An
+app with no `framework_version` predates versioning: legacy rules, with a warning. -/
+def frameworkCheck (cfg : Config) (base : FilePath) : IO Unit := do
+  let mv ← milVersion
+  match cfg.frameworkVersion with
+  | none =>
+    IO.println s!"WARNING: mil.json has no framework_version (an app from before versioning): legacy rules apply. `mil upgrade {base / "mil.json"}` moves it to framework {mv}."
+  | some v =>
+    if versionLt mv v then
+      die s!"this app is for framework {v}, but this mil is {mv}: update the framework checkout (MIL_HOME) to {v} or later"
+    if versionLt v minSupported then
+      die s!"this app is for framework {v}; this mil ({mv}) audits apps for framework {minSupported} or later. Run `mil upgrade {base / "mil.json"}` (it changes locked files: a new sign-off)."
+    let pinned := base / ".lake" / "packages" / "makeitlean" / "VERSION"
+    if ← pinned.pathExists then
+      let pv := (← IO.FS.readFile pinned).trimAscii.toString
+      if pv != v then
+        die s!"mil.json names framework {v}, but the app's lakefile pins framework {pv}: they must agree (`mil upgrade`)"
+
 /-- `mil judge`: generate the solution, build, and run the comparator in a staged judge workspace. -/
-def judge (cfgPath : FilePath) (paranoid : Bool) : IO Unit := do
+def judge (cfgPath : FilePath) (paranoid : Bool) (checkVersion : Bool := true) : IO Unit := do
   let cfg ← loadConfig cfgPath
   let base ← IO.FS.realPath (cfgPath.parent.getD ".")
+  if checkVersion then frameworkCheck cfg base
   run "lake" #["build"] base
   contract cfgPath
   solution cfgPath
@@ -450,6 +523,8 @@ def freeze (cfgPath : FilePath) (who : String) : IO Unit := do
 /-- `mil check-lock`: the frozen files are byte-for-byte what was signed off. -/
 def checkLock (cfgPath : FilePath) : IO Unit := do
   let base := cfgPath.parent.getD "."
+  unless ← (base / "spec.lock").pathExists do
+    die s!"no spec.lock in {base}: the spec is not frozen (after the user's sign-off: `mil freeze`)"
   let lock ← IO.FS.readFile (base / "spec.lock")
   let body := "\n".intercalate (lock.splitOn "\n" |>.filter (!·.startsWith "#"))
   let spawnArgs : IO.Process.SpawnArgs :=
@@ -509,19 +584,6 @@ def review (cfgPath : FilePath) : IO Unit := do
         extra := extra ++ s!"\n### `{e.fileName}`\n\n```lean\n" ++ "\n".intercalate (← guards e.path) ++ "\n```\n"
   else extra := extra ++ "\n## Spec critic\n\nNo `SpecCritic/` directory: the spec critic's checks are missing.\n"
   IO.FS.writeFile (base / "SPEC_REVIEW.md") ((← IO.FS.readFile (base / "SPEC_REVIEW.md")) ++ extra)
-
-/-- The framework checkout (`MIL_HOME`): the environment variable if set, else the checkout this
-`mil` binary was built in (`<home>/cli/.lake/build/bin/mil`), else the nearest enclosing checkout. -/
-def milHome : IO FilePath := do
-  let ok (h : FilePath) : IO Bool := (h / "lean" / "MakeItLean" / "Gates.lean").pathExists
-  if let some h ← IO.getEnv "MIL_HOME" then
-    let h ← IO.FS.realPath h
-    if ← ok h then return h
-    die s!"MIL_HOME={h} is not a MakeItLean checkout (no lean/MakeItLean/Gates.lean)"
-  let exe ← IO.FS.realPath (← IO.appPath)
-  if let some h := exe.parent >>= (·.parent) >>= (·.parent) >>= (·.parent) >>= (·.parent) then
-    if ← ok h then return h
-  findRoot (← IO.currentDir)
 
 /-- Where an app outside the checkout fetches the framework from: `MIL_GIT_URL` / `MIL_GIT_REV`,
 else the checkout's `origin` URL and its `HEAD` commit (pinned, so the build is reproducible). -/
@@ -598,9 +660,9 @@ written for apps inside the checkout; read them with this mapping:
 pure function) into `dir`, renaming `AppName`/`appname`. Inside the framework checkout the app
 reaches the framework by relative paths (`MIL_ROOT` ↦ `../..`, as the examples do); anywhere else
 by git requires pinned to a commit. -/
-def init (name dir : String) (pure : Bool := false) (agent : Option String := none) : IO Unit := do
+def init (name dir : String) (template : String := "app") (agent : Option String := none) : IO Unit := do
   let root ← milHome
-  let tmpl := root / "templates" / (if pure then "pure" else "app")
+  let tmpl := root / "templates" / template
   if ← (FilePath.mk dir).pathExists then die s!"{dir} already exists"
   IO.FS.createDirAll ((FilePath.mk dir).parent.getD ".")
   run "cp" #["-r", tmpl.toString, dir]
@@ -618,20 +680,26 @@ def init (name dir : String) (pure : Bool := false) (agent : Option String := no
     IO.FS.writeFile f s
   for d in (← capture "find" #[dir, "-depth", "-name", "*AppName*"]).splitOn "\n" |>.filter (· != "") do
     run "mv" #[d, d.replace "AppName" name]
+  -- the framework version this app is created for (locked at the freeze with the rest of mil.json)
+  let mj := FilePath.mk dir / "mil.json"
+  let src ← IO.FS.readFile mj
+  unless src.startsWith "{\n" do die s!"{mj}: expected a JSON object"
+  IO.FS.writeFile mj (s!"\{\n  \"framework_version\": \"{← milVersion}\"," ++ (src.drop 1).toString)
   let how := if inside then "framework by relative path" else s!"framework from {url} at {rev.take 12}"
   IO.println s!"created {dir} (spec package; implementation in {dir}/impl; {how}). Next: write REQUIREMENTS.md (Stage 0)."
   if let some a := agent then
     if inside then IO.println "--agent: inside the checkout the repository's own AGENTS.md and .claude/ apply; nothing written"
     else agentSetup a root absDir
 
-/-- `mil init [--pure] [--agent claude|codex] <AppName> <dir>`, flags in any order. -/
-partial def initArgs (args : List String) (pure : Bool := false) (agent : Option String := none) : IO Unit :=
+/-- `mil init [--pure|--lib] [--agent claude|codex] <AppName> <dir>`, flags in any order. -/
+partial def initArgs (args : List String) (template : String := "app") (agent : Option String := none) : IO Unit :=
   match args with
-  | "--pure" :: r => initArgs r true agent
+  | "--pure" :: r => initArgs r "pure" agent
+  | "--lib" :: r => initArgs r "lib" agent
   | "--agent" :: a :: r =>
-    if a == "claude" || a == "codex" then initArgs r pure (some a) else die s!"--agent: claude or codex, not {a}"
-  | [n, d] => init n d pure agent
-  | _ => die "usage: mil init [--pure] [--agent claude|codex] <AppName> <dir>"
+    if a == "claude" || a == "codex" then initArgs r template (some a) else die s!"--agent: claude or codex, not {a}"
+  | [n, d] => init n d template agent
+  | _ => die "usage: mil init [--pure|--lib] [--agent claude|codex] <AppName> <dir>"
 
 /-- The verified-code audit `mil` generates from `mil.json`'s locked `audit` section. Nothing in it
 comes from the implementation, so the implementation cannot narrow it. For a substrate app it also
@@ -863,26 +931,214 @@ def survivorsExplained (cfg : Config) (base : FilePath) : IO Unit := do
   if bad.isEmpty then IO.println "Surviving mutants: all explained in TRUST.md"
   else die s!"Surviving mutants not explained in TRUST.md:\n{"\n".intercalate bad.toList}"
 
+/-- The steps `mil check` and `mil audit` share, in order, so the two cannot drift apart: spec
+gates, spec critic, the TRUST.md table rules, contract and comparator, the verified-code audit, the
+trust-name and shell-wiring gates. -/
+def sharedSteps (cfg : Config) (cfgPath base : FilePath) (paranoid : Bool) : IO Unit := do
+  IO.println "== spec gates"; run "lake" #["build"] base
+  IO.println "== spec critic"; specCritic cfg base
+  if cfg.audit.isSome then IO.println "== trust manifest rules"; trustRules cfg base
+  IO.println (if paranoid then "== comparator (--paranoid)" else "== comparator")
+  judge cfgPath paranoid (checkVersion := false)
+  IO.println "== verified-code audit"; verifiedAudit cfg base
+  IO.println "== trust manifest and shell wiring"; trust cfg base
+
+/-- `mil check`: the development loop. Everything `mil audit` checks except the lock, the
+comparator's `--paranoid` mode and the self-test (the slow part), so it is never a release check. -/
+def check (cfgPath : FilePath) : IO Unit := do
+  let cfg ← loadConfig cfgPath
+  let base := cfgPath.parent.getD "."
+  frameworkCheck cfg base
+  sharedSteps cfg cfgPath base (paranoid := false)
+  IO.println "CHECK PASSED (a development check, not a release audit: no lock, no --paranoid comparator, no self-test; run `mil audit`)"
+
 /-- `mil audit`: lock (required unless --allow-unfrozen), spec gates, spec critic, contract,
 comparator (--paranoid), verified-code audit, self-test, trust manifest. -/
 def audit (cfgPath : FilePath) (allowUnfrozen : Bool) : IO Unit := do
   let cfg ← loadConfig cfgPath
   let base := cfgPath.parent.getD "."
+  frameworkCheck cfg base
   if ← (base / "spec.lock").pathExists then checkLock cfgPath
   else if allowUnfrozen then IO.println "WARNING: spec not frozen (no spec.lock); this audit is not a release check"
   else die "no spec.lock: the spec was never frozen. Freeze it after sign-off (`mil freeze`), or pass --allow-unfrozen for a development run"
-  IO.println "== spec gates"; run "lake" #["build"] base
-  IO.println "== spec critic"; specCritic cfg base
-  if cfg.audit.isSome then IO.println "== trust manifest rules"; trustRules cfg base
-  IO.println "== comparator (--paranoid)"; judge cfgPath true
-  IO.println "== verified-code audit"; verifiedAudit cfg base
+  sharedSteps cfg cfgPath base (paranoid := true)
   unless cfg.pure do IO.println "== self-test (Stage 5)"; selftestCmd cfgPath
-  IO.println "== trust manifest and shell wiring"; trust cfg base
   if cfg.audit.isSome then survivorsExplained cfg base
   else IO.println "WARNING: legacy app (no `audit` section): the TRUST.md rules are not applied"
   IO.println (if ← (base / "spec.lock").pathExists then "AUDIT PASSED" else "AUDIT PASSED (UNFROZEN SPEC)")
 
-def usage : String := "usage: mil init [--pure] [--agent claude|codex] <AppName> <dir> | solution|judge|contract|check-lock|review|selftest|audit <mil.json> | freeze <mil.json> <who> | judge --paranoid <mil.json> | audit --allow-unfrozen <mil.json> | comparator [--paranoid] <impl_dir> <config.json>"
+/-- `mil upgrade <app>/mil.json [--apply]`: move an app to this framework version. A dry run
+unless `--apply`; every change is printed first.
+- `framework_version` set to this framework's;
+- a missing `audit` section derived from the conventions (`<Root>.Core`, `<Root>.Proofs`; the
+  shell; for a substrate app the type names from the legacy `impl/audit.lean`'s pinning
+  examples, else the template's `CState`/`CCmd`), and missing `selftest` defaults;
+- an external app's pinned framework commit moved to this checkout's (`lake update` after);
+- an existing `spec.lock` kept as `spec.lock.v<N>`: the upgrade changes locked files, so the spec
+  needs a new sign-off and `mil freeze`.
+It never writes spec, implementation, critic or trust files: what those need is listed. -/
+def upgrade (cfgPath : FilePath) (apply : Bool) : IO Unit := do
+  let base ← IO.FS.realPath (cfgPath.parent.getD ".")
+  let cfgFile := base / "mil.json"
+  let cfg ← loadConfig cfgFile
+  let mv ← milVersion
+  let mut j ← IO.ofExcept (Json.parse (← IO.FS.readFile cfgFile))
+  let mut changes : Array String := #[]
+  let mut todo : Array String := #[]
+  if cfg.frameworkVersion != some mv then
+    if let some v := cfg.frameworkVersion then
+      if versionLt mv v then die s!"this app is for framework {v}, newer than this mil ({mv}): update the framework checkout instead"
+    changes := changes.push s!"mil.json: framework_version {cfg.frameworkVersion.getD "(none)"} → {mv}"
+    j := j.setObjVal! "framework_version" (toJson mv)
+  if cfg.audit.isNone then
+    let root := implRoot cfg
+    let shell := if cfg.pure then [] else [root ++ ".Shell", root ++ ".Text", root ++ ".Oracle"]
+    let mut a := Json.mkObj [("verified", toJson [root ++ ".Core", root ++ ".Proofs"]), ("shell", toJson shell)]
+    let mut note := ""
+    if !cfg.pure then
+      let legacy := base / cfg.implDir / "audit.lean"
+      let src ← if ← legacy.pathExists then IO.FS.readFile legacy else Pure.pure ""
+      let after (pfx : String) : Option String := match src.splitOn pfx with
+        | _ :: rest :: _ => some (rest.takeWhile (fun c => c != ')' && c != ' ')).toString
+        | _ => none
+      let st := (after "(s : ").getD "CState"
+      let cmd := (after "(c : ").getD "CCmd"
+      note := if (after "(s : ").isSome then s!" (type names {st}, {cmd} from impl/audit.lean)"
+        else " (type names CState, CCmd: the template's; check them)"
+      let ns := cfg.specModule
+      a := a.setObjVal! "substrate" (Json.mkObj [
+        ("state", toJson s!"{ns}.{st}"), ("cmd", toJson s!"{ns}.{cmd}"), ("pick", toJson s!"{root}.pick"),
+        ("pick_ok", toJson s!"{root}.pickOk"), ("refines", toJson s!"{root}.refines"),
+        ("crash_consistent", toJson s!"{root}.crash_consistent")])
+    j := j.setObjVal! "audit" a
+    changes := changes.push s!"mil.json: add the `audit` section{note}; mil generates the verified-code audit from it (impl/audit.lean is no longer read), and the spec's lake-manifest.json joins the lock"
+  if !cfg.pure && (j.getObjVal? "selftest").toOption.isNone then
+    let d : SelftestCfg := {}
+    j := j.setObjVal! "selftest" (Json.mkObj [("runs", toJson d.runs), ("length", toJson d.length),
+      ("max_mutants", toJson d.maxMutants), ("min_score", toJson d.minScore)])
+    changes := changes.push s!"mil.json: add the `selftest` section (mil's defaults: {d.runs} runs × {d.length} commands, {d.maxMutants} mutants, minimum score {d.minScore})"
+  -- an external app: move the pinned framework commit
+  let lake := base / "lakefile.lean"
+  let lsrc ← IO.FS.readFile lake
+  let mut newLake := lsrc
+  if (lsrc.splitOn "from git \"").length > 1 then
+    let (_, rev) ← gitSource (← milHome)
+    let lines := lsrc.splitOn "\n"
+    let moved := lines.map fun l =>
+      match l.splitOn "from git \"", l.splitOn " @ \"" with
+      | _ :: _ :: _, [pre, post] =>
+        let old := post.takeWhile (· != '"')
+        pre ++ " @ \"" ++ rev ++ (post.drop old.toString.length).toString
+      | _, _ => l
+    newLake := "\n".intercalate moved
+    if newLake != lsrc then
+      changes := changes.push s!"lakefile.lean: framework pinned to {rev.take 12} (then `lake update` in the spec and impl)"
+  let lock := base / "spec.lock"
+  let mut lockTo : Option FilePath := none
+  if (← lock.pathExists) && !changes.isEmpty then
+    let mut k := 1
+    while ← (base / s!"spec.lock.v{k}").pathExists do k := k + 1
+    lockTo := some (base / s!"spec.lock.v{k}")
+    changes := changes.push s!"spec.lock → spec.lock.v{k} (kept): locked files change, so the spec needs a new sign-off"
+  unless ← (base / specRoot cfg / "SpecCritic").isDir do
+    todo := todo.push s!"spec critic: write {specRoot cfg}/SpecCritic/ (mil audit requires at least one #guard there)"
+  if cfg.audit.isNone then
+    todo := todo.push "auditor: bring TRUST.md to the new rules: every Proven row cites a name the audit anchors; every 'Tested against the model' row cites `selftest`; after `mil selftest`, name and explain each surviving mutant (`Shell.lean:21`)"
+  if changes.isEmpty then
+    IO.println s!"{cfgFile}: already at framework {mv}; nothing to upgrade"
+    return
+  IO.println s!"Upgrade {cfgFile} to framework {mv}:"
+  for c in changes do IO.println s!"  - {c}"
+  unless todo.isEmpty do
+    IO.println "Not done by mil (the roles' work):"
+    for t in todo do IO.println s!"  - {t}"
+  unless apply do
+    IO.println "Dry run: nothing changed. Rerun with --apply."
+    return
+  IO.FS.writeFile cfgFile (j.pretty ++ "\n")
+  if newLake != lsrc then
+    IO.FS.writeFile lake newLake
+    run "lake" #["update"] base
+    run "lake" #["update"] (base / cfg.implDir)
+  if let some to := lockTo then IO.FS.rename lock to
+  IO.println s!"Applied. Next: `mil check`, `mil selftest`, the items above, `mil review` for the user's sign-off, then `mil freeze`."
+
+/-- Run a program and capture its output; `none` if it cannot be started (not installed). -/
+def probe (cmd : String) (args : Array String) (cwd : Option FilePath := none) : IO (Option (UInt32 × String)) := do
+  try
+    let out ← IO.Process.output { cmd, args, cwd }
+    return some (out.exitCode, (out.stdout ++ out.stderr).trimAscii.toString)
+  catch _ => return none
+
+/-- `mil doctor`: is this machine ready? Each check prints PASS, WARN or FAIL with the fix; the
+exit code is non-zero if any check fails. -/
+def doctor : IO Bool := do
+  let mut failed := false
+  let report (status name detail : String) : IO Unit :=
+    IO.println s!"{status}  {name}{if detail.isEmpty then "" else ": " ++ detail}"
+  -- the framework itself
+  let home? ← try some <$> milHome catch _ => Pure.pure none
+  match home? with
+  | none => report "FAIL" "framework checkout" "not found; set MIL_HOME to your MakeItLean checkout"; failed := true
+  | some home =>
+    let v ← try milVersion catch e => Pure.pure s!"? ({e})"
+    report "PASS" "framework checkout" s!"{home} (version {v})"
+  -- Lean
+  -- from the checkout: elan's `lake` needs a `lean-toolchain` to know which Lean to run
+  match ← probe "lake" #["--version"] home? with
+  | some (0, out) => report "PASS" "lake" out
+  | _ => report "FAIL" "lake" "not on PATH. Install elan: curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none"; failed := true
+  if let some home := home? then
+    let tc := (← IO.FS.readFile (home / "lean-toolchain")).trimAscii.toString
+    let ver := ((tc.splitOn ":").getLastD tc)
+    match ← probe "elan" #["toolchain", "list"] with
+    | some (0, out) =>
+      if (out.splitOn ver).length > 1 then report "PASS" "Lean toolchain" s!"{tc} installed"
+      else report "WARN" "Lean toolchain" s!"{tc} not installed yet; the first `lake build` downloads it (or: elan toolchain install {tc})"
+    | _ => report "WARN" "Lean toolchain" "elan not found; cannot check (lake may still work)"
+  -- the comparator's sandbox
+  match ← probe "bwrap" #["--version"] with
+  | some (0, out) =>
+    report "PASS" "bubblewrap" out
+    let uid := (← probe "id" #["-u"]).map (·.2) |>.getD "0"
+    -- the comparator's sandbox also mounts the user's runtime directory, which must exist
+    match ← probe "bwrap" #["--ro-bind", "/", "/", "--unshare-user", "--dev", "/dev", "--proc", "/proc", "--dir", s!"/run/user/{uid}", "true"] with
+    | some (0, _) => report "PASS" "bubblewrap sandbox" s!"can create a user namespace; /run/user/{uid} available"
+    | some (_, out) =>
+      report "FAIL" "bubblewrap sandbox" s!"cannot start ({out}). If /run/user/<uid> is missing (a bare container), create it for your user; on Ubuntu 24.04: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; in Docker: run with --security-opt seccomp=unconfined --security-opt apparmor=unconfined; inside another agent's sandbox (Codex), run mil outside it"
+      failed := true
+    | none => report "FAIL" "bubblewrap sandbox" "bwrap could not be run"; failed := true
+  | _ => report "FAIL" "bubblewrap" "not installed (the comparator's sandbox): sudo apt-get install -y bubblewrap (Linux only; on macOS or Windows use the container, docs/GUIDE.md)"; failed := true
+  -- tools the tests use
+  match ← probe "python3" #["-c", "import sys; print('%d.%d' % sys.version_info[:2]); sys.exit(0 if sys.version_info >= (3, 8) else 1)"] with
+  | some (0, out) => report "PASS" "python3" out
+  | some (_, out) => report "FAIL" "python3" s!"{out} is too old (3.8 or later)"; failed := true
+  | none => report "FAIL" "python3" "not installed (difftest, selftest, guard hooks)"; failed := true
+  match ← probe "git" #["--version"] with
+  | some (0, out) => report "PASS" "git" out
+  | _ => report "FAIL" "git" "not installed (apps pin the framework by git commit)"; failed := true
+  match ← probe "node" #["-e", "process.stdout.write(process.versions.node); process.exit(+process.versions.node.split('.')[0] >= 24 ? 0 : 1)"] with
+  | some (0, out) => report "PASS" "node" s!"{out} (only for TypeScript shells)"
+  | some (_, out) => report "WARN" "node" s!"{out}: TypeScript shells need Node 24 or later; nothing else does"
+  | none => report "WARN" "node" "not installed: only TypeScript shells need it"
+  -- apps outside the checkout fetch the framework by commit
+  if let some home := home? then
+    let g (args : Array String) := probe "git" (#["-C", home.toString] ++ args)
+    match ← g #["rev-parse", "HEAD"] with
+    | some (0, rev) =>
+      match ← g #["branch", "-r", "--contains", rev] with
+      | some (0, "") => report "WARN" "framework commit" s!"{rev.take 12} is on no remote branch: push it before `mil init` outside the checkout (apps fetch it by commit), or set MIL_GIT_URL"
+      | some (0, _) => report "PASS" "framework commit" s!"{rev.take 12} is on a remote branch"
+      | _ => report "WARN" "framework commit" "cannot tell whether it is pushed"
+      match ← g #["status", "--porcelain", "--untracked-files=no"] with
+      | some (0, "") => Pure.pure ()
+      | some (0, _) => report "WARN" "framework checkout" "has uncommitted changes: new apps pin the last commit, without them"
+      | _ => Pure.pure ()
+    | _ => report "WARN" "framework commit" "the checkout is not a git repository: apps outside it cannot pin it"
+  IO.println (if failed then "doctor: something to fix (FAIL above)" else "doctor: ready")
+  return !failed
+
+def usage : String := "usage: mil init [--pure|--lib] [--agent claude|codex] <AppName> <dir> | solution|judge|contract|check|check-lock|review|selftest|audit <mil.json> | upgrade [--apply] <mil.json> | doctor | --version | freeze <mil.json> <who> | judge --paranoid <mil.json> | audit --allow-unfrozen <mil.json> | comparator [--paranoid] <impl_dir> <config.json>"
 
 def main (args : List String) : IO UInt32 := do
   try
@@ -898,6 +1154,15 @@ def main (args : List String) : IO UInt32 := do
     | ["audit", "--allow-unfrozen", c] => audit c true
     | ["contract", c] => contract c
     | ["selftest", c] => selftestCmd c
+    | ["check", c] => check c
+    | ["doctor"] => return (if ← doctor then 0 else 1)
+    | ["upgrade", c] => upgrade c false
+    | ["upgrade", "--apply", c] => upgrade c true
+    | ["--version"] =>
+      let home ← milHome
+      let rev ← try Pure.pure (← capture "git" #["-C", home.toString, "rev-parse", "--short", "HEAD"]).trimAscii.toString
+        catch _ => Pure.pure "?"
+      IO.println s!"mil {← milVersion} (framework at {home}, commit {rev})"
     | ["comparator", i, c] => comparatorCmd i c false
     | ["comparator", "--paranoid", i, c] => comparatorCmd i c true
     | _ => IO.eprintln usage; return 2

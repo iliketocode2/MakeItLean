@@ -1,0 +1,12 @@
+{
+  "holes": {
+    "AppName.Spec.Impl.insertSorted": "AppNameImpl.insertSorted x s",
+    "AppName.Spec.Impl.member": "AppNameImpl.member x s",
+    "AppName.Spec.Impl.size": "AppNameImpl.size s"
+  },
+  "obligations": {
+    "AppName.Spec.impl_insertSorted_ok": "AppNameImpl.insertSorted_ok x s",
+    "AppName.Spec.impl_member_ok": "AppNameImpl.member_ok x s h",
+    "AppName.Spec.impl_size_ok": "AppNameImpl.size_ok s"
+  }
+}
