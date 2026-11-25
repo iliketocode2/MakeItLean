@@ -1,5 +1,0 @@
-{"theorem_names": ["Counter.Spec.impl_pick_ok"],
- "solution_module": "CounterSol.Holes",
- "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
- "definition_names": ["Counter.Spec.Impl.pick"],
- "challenge_module": "Counter.Spec"}

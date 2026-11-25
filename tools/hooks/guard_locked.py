@@ -24,7 +24,7 @@ BASH_WRITES = re.compile(r"(>|\btee\b|\bsed\s+-i|\bperl\s+-i|\bmv\b|\bcp\b|\brm\
 def repo_root(start):
     d = os.path.abspath(start)
     while True:
-        if os.path.isdir(os.path.join(d, "judge")) and os.path.isfile(os.path.join(d, "lakefile.lean")):
+        if os.path.isfile(os.path.join(d, "lean", "MakeItLean", "Gates.lean")):  # the framework checkout (or a worktree of it)
             return d
         parent = os.path.dirname(d)
         if parent == d:
@@ -33,8 +33,8 @@ def repo_root(start):
 
 
 def root_of(path):
-    """The repository (or worktree) holding `path`: its nearest ancestor with judge/ and a
-    lakefile. Found from the target, not the agent's working directory, so a worktree's own
+    """The repository (or worktree) holding `path`: its nearest ancestor holding
+    lean/MakeItLean/Gates.lean. Found from the target, not the agent's working directory, so a worktree's own
     frozen files are protected whatever the agent's cwd is."""
     d = path if os.path.isdir(path) else os.path.dirname(path)
     while d and not os.path.isdir(d):

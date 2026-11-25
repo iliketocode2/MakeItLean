@@ -38,7 +38,7 @@ BASH_WRITES = re.compile(r"(>|\btee\b|\bsed\s+-i|\bperl\s+-i|\bmv\b|\bcp\b|\brm\
 def repo_root(start):
     d = os.path.abspath(start)
     while True:
-        if os.path.isdir(os.path.join(d, "judge")) and os.path.isfile(os.path.join(d, "lakefile.lean")):
+        if os.path.isfile(os.path.join(d, "lean", "MakeItLean", "Gates.lean")):  # the framework checkout (or a worktree of it)
             return d
         parent = os.path.dirname(d)
         if parent == d:

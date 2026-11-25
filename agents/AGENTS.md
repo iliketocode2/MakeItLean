@@ -5,7 +5,7 @@ You are building an application **spec-first in Lean 4**. The code that runs mus
 ## Environment
 - Linux/WSL. Lean `v4.36.0` (pinned in every `lean-toolchain`). Build with `lake build`. No Mathlib.
 - `mil` is the framework CLI: `~/MakeItLean/cli/.lake/build/bin/mil` (build it with `cd cli && lake build` if missing).
-- The repository root is the **judge workspace** (`lakefile.lean`, `judge/`). Apps live in `examples/<app>/`.
+- Apps live in `examples/<app>/`. `mil judge` runs the comparator in a **staged judge workspace**: a temporary copy of only your app's packages, deleted afterwards (`MIL_KEEP_JUDGE=1` keeps it for inspection). Nothing is registered at the repository root.
 
 ## The pattern: an app on the LeanKV substrate
 Durable apps keep their state in **LeanKV**, a proven ordered key-value store (`examples/kvstore/`). Each app command becomes **exactly one KV command** (a read, or one atomic `put`/`delete`/`batch`), chosen by a function `pick` from the current store contents. The app proves two things: its reference translation `pickRef` refines its model (`pickRef_refines`, in the spec), and its fast `pick` equals `pickRef` (the obligation). LeanKV's `app_crash_consistent` then turns those into the app's own end-to-end theorem, `<App>Impl.crash_consistent` (already written in the template's `Proofs.lean`): after any crash, the store decodes to the model after exactly the acknowledged commands, plus possibly the one in flight.

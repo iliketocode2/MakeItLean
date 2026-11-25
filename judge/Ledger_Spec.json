@@ -1,5 +1,0 @@
-{"theorem_names": ["Ledger.Spec.impl_pick_ok"],
- "solution_module": "LedgerSol.Holes",
- "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
- "definition_names": ["Ledger.Spec.Impl.pick"],
- "challenge_module": "Ledger.Spec"}

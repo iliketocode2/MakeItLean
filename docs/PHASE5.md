@@ -219,6 +219,34 @@ agent says it can't be done.** Pre-register before running:
     writes into the staged `.lake` could go through the links into the repository's build outputs.
   - Not yet shown: two parallel judge runs (W1.3's test). The staged directories share nothing, so
     no interference is expected.
+- 2026-11-25, **W1.2–W1.3 done: the staged judge is in `mil`.**
+  - **`mil judge`** builds the app and its solution in place. It then copies the app's path
+    packages, read from the impl's `lake-manifest.json` (outermost packages only), into a `mktemp`
+    directory, at their paths relative to their common ancestor. There it writes a one-require
+    lakefile and `judge.json`, runs `lake update`, builds the challenge and solution (replayed), runs
+    `lake comparator`, and deletes the directory (`MIL_KEEP_JUDGE=1` keeps it).
+    - A git dependency is refused with a clear message (W2).
+    - **`mil comparator [--paranoid] <impl> <config>`** does the same for a package with its own
+      config; LeanKV's `judge.sh` uses it.
+  - **`mil init` registers nothing.** The root `lakefile.lean`, `lake-manifest.json` and `judge/`
+    are deleted.
+  - **Repository marker changed.** `mil` and both guard hooks now find the checkout by
+    `lean/MakeItLean/Gates.lean` (before: `judge/` + root lakefile). Without this the guards would
+    have found no repository, and could have stopped protecting frozen files; test_guards 104/104.
+  - **`all.sh`:** step 8's lakefile backup/restore is gone. New step 8c:
+    - a planted `sorry` in a fresh pure app's `fill.json` is REJECTED (`sorryAx`) through the
+      staged judge;
+    - Counter and Ledger judged in parallel are both ACCEPTED;
+    - no `lakefile.lean`, `lake-manifest.json` or `judge/` appears at the root.
+  - **Two bugs found by the suite, fixed:**
+    1. a package that *is* the common ancestor (LeanKV: `impl/` and its parent) got an empty
+       relative path. Fix: go one level up. The spike missed this because it listed the packages
+       by hand.
+    2. the audit's verified-code check needs the solution built in the app, which the old root
+       build did as a side effect. Fix: `mil judge` builds the solution module in place.
+  - Full `tests/all.sh`: ALL CHECKS PASSED; no `mil-judge-*` directories left in `/tmp`.
+
+  **W1 exit met.** Next: W2.
 - Friction: the lock guard blocks a *read-only* command that names a frozen file when the same
   command has an inline `python3 -c` (the inline-interpreter rule counts every named file as
   written). Seen with `grep … examples/kvstore/lakefile.lean; python3 -c …`. Workaround: split

@@ -61,11 +61,7 @@ if [ $QUICK -eq 0 ]; then
   step "8. A fresh app from the template: init, judge, tests, freeze, strict audit"
   APP="$ROOT/examples/ztemplatecheck"
   PAPP="$ROOT/bench/ztemplatecheck/zpurecheck"   # deeper than examples/: exercises MIL_ROOT
-  cp "$ROOT/lakefile.lean" "$ROOT/.lakefile.lean.bak"; cp "$ROOT/lake-manifest.json" "$ROOT/.lake-manifest.json.bak"
-  restore() {
-    rm -rf "$APP" "$ROOT/bench/ztemplatecheck" "$ROOT/judge/Ztemplatecheck_Spec.json" "$ROOT/judge/Zpurecheck_Spec.json"
-    mv "$ROOT/.lakefile.lean.bak" "$ROOT/lakefile.lean"; mv "$ROOT/.lake-manifest.json.bak" "$ROOT/lake-manifest.json"
-  }
+  restore() { rm -rf "$APP" "$ROOT/bench/ztemplatecheck"; }
   trap restore EXIT
   check 'created' bash -c "cd '$ROOT' && '$MIL' init Ztemplatecheck examples/ztemplatecheck"
   check 'ACCEPTED' "$MIL" judge "$APP/mil.json"
@@ -78,6 +74,25 @@ if [ $QUICK -eq 0 ]; then
   check 'ACCEPTED' "$MIL" judge "$PAPP/mil.json"
   check 'Frozen' "$MIL" freeze "$PAPP/mil.json" ci-template-check
   check 'Trust gate|AUDIT' "$MIL" audit "$PAPP/mil.json"
+
+  step "8c. Staged judge: a planted sorry is REJECTED; two apps judged in parallel; no root workspace"
+  python3 -I - "$PAPP/impl/fill.json" <<'PY'
+import json, sys; f = sys.argv[1]; j = json.load(open(f))
+j["obligations"] = {k: "sorry" for k in j["obligations"]}; json.dump(j, open(f, "w"))
+PY
+  if "$MIL" judge "$PAPP/mil.json" >/tmp/mil-neg.$$ 2>&1; then echo "FAILED: planted sorry was accepted"; exit 1; fi
+  grep -q 'REJECTED' /tmp/mil-neg.$$ && grep -q 'sorryAx' /tmp/mil-neg.$$ \
+    || { echo "FAILED: planted sorry not rejected by the comparator"; tail -20 /tmp/mil-neg.$$; exit 1; }
+  rm -f /tmp/mil-neg.$$; echo "planted sorry: REJECTED (sorryAx)"
+  "$MIL" judge "$ROOT/examples/counter/mil.json" >/tmp/mil-par1.$$ 2>&1 & p1=$!
+  "$MIL" judge "$ROOT/examples/ledger/mil.json" >/tmp/mil-par2.$$ 2>&1 & p2=$!
+  wait $p1 && wait $p2 && grep -q ACCEPTED /tmp/mil-par1.$$ && grep -q ACCEPTED /tmp/mil-par2.$$ \
+    || { echo "FAILED: parallel judge"; tail -20 /tmp/mil-par1.$$ /tmp/mil-par2.$$; exit 1; }
+  rm -f /tmp/mil-par1.$$ /tmp/mil-par2.$$; echo "parallel judge (Counter, Ledger): both ACCEPTED"
+  for f in lakefile.lean lake-manifest.json judge; do
+    [ ! -e "$ROOT/$f" ] || { echo "FAILED: $f appeared at the repository root"; exit 1; }
+  done
+  echo "no root judge workspace: ok"
 fi
 
 printf '\nALL CHECKS PASSED\n'

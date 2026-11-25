@@ -6,7 +6,10 @@ import Lean.Data.Json
     mil init [--pure] <AppName> <dir> create an app from templates/app (on the LeanKV substrate)
                                       or templates/pure (one pure function)
     mil solution <app>/mil.json       generate the comparator solution module from the hole files
-    mil judge <app>/mil.json          build, then `lake comparator` from the root judge workspace
+    mil judge <app>/mil.json          build, then `lake comparator` in a staged judge workspace
+                                      (a temporary copy of only this app's packages)
+    mil comparator [--paranoid] <impl_dir> <config.json>
+                                      the staged comparator for a built package with its own config
     mil freeze <app>/mil.json <who>   record the spec's file hashes in spec.lock (after sign-off)
     mil check-lock <app>/mil.json     verify the frozen spec is unchanged
     mil review <app>/mil.json         generate SPEC_REVIEW.md from the elaborated spec
@@ -142,12 +145,79 @@ def solution (cfgPath : FilePath) : IO Unit := do
   let remaining := (out.splitOn ":= sorry").length - 1
   IO.println s!"wrote {path} ({cfg.holes.length} holes, {cfg.obligations.length} obligations; `:= sorry` left: {remaining})"
 
-/-- The repository root (the judge workspace): the nearest ancestor holding `judge/`. -/
+/-- The MakeItLean checkout: the nearest ancestor holding `lean/MakeItLean/Gates.lean` (the same
+marker the guard hooks use). Needed only by `mil init`, for the templates. -/
 partial def findRoot (d : FilePath) : IO FilePath := do
-  if ← (d / "judge").isDir then return d
+  if ← (d / "lean" / "MakeItLean" / "Gates.lean").pathExists then return d
   match d.parent with
-  | some p => if p == d then die "no judge workspace found" else findRoot p
-  | none => die "no judge workspace found (a directory with judge/ above the app)"
+  | some p => if p == d then die "no MakeItLean checkout found" else findRoot p
+  | none => die "no MakeItLean checkout found (a directory with lean/MakeItLean/Gates.lean above this one)"
+
+/-- The path components of an absolute path. -/
+def comps (p : FilePath) : List String := p.toString.splitOn "/" |>.filter (· != "")
+
+/-- The path packages a Lake package depends on (transitively), from its `lake-manifest.json`, as
+absolute paths. A git package is refused: the staged judge does not support one yet (Phase 5 W2). -/
+def pathPackages (pkg : FilePath) : IO (List FilePath) := do
+  let j ← match Json.parse (← IO.FS.readFile (pkg / "lake-manifest.json")) with
+    | .ok j => pure j | .error e => die s!"{pkg}/lake-manifest.json: {e}"
+  let ps ← match j.getObjValAs? (Array Json) "packages" with
+    | .ok a => pure a | .error e => die s!"{pkg}/lake-manifest.json: packages: {e}"
+  ps.toList.mapM fun p => do
+    let name := (p.getObjValAs? String "name").toOption.getD "?"
+    unless (p.getObjValAs? String "type").toOption == some "path" do
+      die s!"package `{name}` is not a path dependency; the staged judge supports only path dependencies"
+    let some d := (p.getObjValAs? String "dir").toOption | die s!"package `{name}`: no dir in the manifest"
+    IO.FS.realPath (pkg / d)
+
+/-- Run `lake comparator` on a built implementation package in a **staged judge workspace**: a
+fresh temporary directory holding copies (sources and prebuilt `.lake`) of only the packages this
+implementation needs, at their paths relative to their common ancestor. Locked relative `require`s
+resolve unchanged, the comparator's sandbox sees only these copies, and judge runs share nothing,
+so they can run in parallel. `MIL_KEEP_JUDGE=1` keeps the directory for inspection. -/
+def stagedComparator (implDir : FilePath) (judgeCfg : Json) (paranoid : Bool) : IO Unit := do
+  let impl ← IO.FS.realPath implDir
+  let pkgs := impl :: (← pathPackages impl)
+  -- the common ancestor of every package
+  let cs := pkgs.map comps
+  let common0 := (cs.head!.zip (List.range cs.head!.length)).takeWhile (fun (c, i) =>
+    cs.all fun l => l[i]? == some c) |>.map (·.1)
+  -- if a package *is* the common ancestor (LeanKV: `impl/` and its parent), go one level up, so
+  -- every package keeps a non-empty relative path
+  let common := if cs.any (·.length == common0.length) then common0.dropLast else common0
+  let rel (p : FilePath) : String := "/".intercalate ((comps p).drop common.length)
+  -- copy only outermost packages (a nested one, e.g. `impl/` under its spec package, comes along)
+  let isUnder (a b : FilePath) : Bool := a != b && (comps b).isPrefixOf (comps a)
+  let tops := (pkgs.eraseDups).filter fun p => !pkgs.any (isUnder p ·)
+  let stage : FilePath := (← capture "mktemp" #["-d", "-t", "mil-judge-XXXXXX"]).trimAscii.toString
+  try
+    for p in tops do
+      let dst := stage / rel p
+      IO.FS.createDirAll (dst.parent.getD stage)
+      run "cp" #["-a", p.toString, dst.toString]
+    let tc := impl / "lean-toolchain"
+    if ← tc.pathExists then IO.FS.writeFile (stage / "lean-toolchain") (← IO.FS.readFile tc)
+    let implLake ← IO.FS.readFile (impl / "lakefile.lean")
+    let some pkgName := (implLake.splitOn "\n").findSome? (fun l =>
+        if l.startsWith "package " then some ((l.drop 8).takeWhile (· != ' ')).toString else none)
+      | die s!"{impl}/lakefile.lean: no `package` line"
+    IO.FS.writeFile (stage / "lakefile.lean")
+      s!"import Lake\nopen Lake DSL\n\n/-! Staged judge workspace, generated by `mil`. -/\npackage milJudge\n\nrequire {pkgName} from \"{rel impl}\"\n"
+    IO.FS.writeFile (stage / "judge.json") judgeCfg.pretty
+    let quiet (args : Array String) : IO Unit := do
+      let out ← IO.Process.output { cmd := "lake", args, cwd := stage }
+      unless out.exitCode == 0 do die s!"staged judge: `lake {" ".intercalate args.toList}` failed:\n{out.stdout}{out.stderr}"
+    quiet #["update"]
+    let mods := ["challenge_module", "solution_module"].filterMap (judgeCfg.getObjValAs? String · |>.toOption)
+    quiet (#["build"] ++ mods.toArray)
+    let args := #["comparator", "--config=judge.json"] ++ (if paranoid then #["--paranoid"] else #[])
+    let out ← IO.Process.output { cmd := "lake", args, cwd := stage }
+    let errs := ((out.stdout ++ out.stderr).splitOn "\n").filter (·.startsWith "error")
+    if out.exitCode == 0 then IO.println "ACCEPTED: all obligations proven against the spec"
+    else die ("REJECTED:\n" ++ "\n".intercalate errs)
+  finally
+    if (← IO.getEnv "MIL_KEEP_JUDGE").isSome then IO.eprintln s!"staged judge kept at {stage}"
+    else IO.FS.removeDirAll stage
 
 /-- The contract gate: the elaborated spec's holes and obligations are exactly `mil.json`'s, so no
 theorem escapes the comparator by naming a hole without being listed. -/
@@ -160,7 +230,7 @@ def contract (cfgPath : FilePath) : IO Unit := do
   try run "lake" #["env", "lean", ".mil_contract.lean"] base
   finally IO.FS.removeFile file
 
-/-- `mil judge`: generate the solution, build, and run the comparator from the judge workspace. -/
+/-- `mil judge`: generate the solution, build, and run the comparator in a staged judge workspace. -/
 def judge (cfgPath : FilePath) (paranoid : Bool) : IO Unit := do
   let cfg ← loadConfig cfgPath
   let base ← IO.FS.realPath (cfgPath.parent.getD ".")
@@ -168,20 +238,22 @@ def judge (cfgPath : FilePath) (paranoid : Bool) : IO Unit := do
   contract cfgPath
   solution cfgPath
   run "lake" #["build"] (base / cfg.implDir)
-  let root ← findRoot base
-  let name := cfg.specModule.replace "." "_"
+  -- build the solution in place too (not a default target in the pure template): the audit's
+  -- verified-code check imports it, and the staged copy then replays it instead of rebuilding
+  run "lake" #["build", cfg.solutionModule] (base / cfg.implDir)
   let judgeCfg := Json.mkObj [
     ("challenge_module", cfg.specModule), ("solution_module", cfg.solutionModule),
     ("theorem_names", toJson (cfg.obligations.map (·.1))),
     ("definition_names", toJson (cfg.holes.map (·.1))),
     ("permitted_axioms", toJson ["propext", "Quot.sound", "Classical.choice"])]
-  IO.FS.writeFile (root / "judge" / s!"{name}.json") judgeCfg.pretty
-  run "lake" #["build", cfg.specModule, cfg.solutionModule] root
-  let args := #["comparator", s!"--config=judge/{name}.json"] ++ (if paranoid then #["--paranoid"] else #[])
-  let out ← IO.Process.output { cmd := "lake", args, cwd := root }
-  let errs := (out.stdout.splitOn "\n").filter (·.startsWith "error")
-  if out.exitCode == 0 then IO.println "ACCEPTED: all obligations proven against the spec"
-  else die ("REJECTED:\n" ++ "\n".intercalate errs)
+  stagedComparator (base / cfg.implDir) judgeCfg paranoid
+
+/-- `mil comparator <impl_dir> <config.json>`: the staged comparator for a package that has its
+own comparator config instead of a `mil.json` (LeanKV). The package must already be built. -/
+def comparatorCmd (implDir cfgFile : String) (paranoid : Bool) : IO Unit := do
+  match Json.parse (← IO.FS.readFile cfgFile) with
+  | .ok j => stagedComparator implDir j paranoid
+  | .error e => die s!"{cfgFile}: {e}"
 
 /-- Files covered by the lock. -/
 def lockList (cfg : Config) : List String := ["lean-toolchain", "lakefile.lean", "mil.json"] ++ cfg.lockFiles
@@ -261,11 +333,7 @@ def init (name dir : String) (pure : Bool := false) : IO Unit := do
     IO.FS.writeFile f (((s.replace "AppName" name).replace "appname" lower).replace "MIL_ROOT" up)
   for d in (← capture "find" #[dir, "-depth", "-name", "*AppName*"]).splitOn "\n" |>.filter (· != "") do
     run "mv" #[d, d.replace "AppName" name]
-  -- register the app's implementation in the root judge workspace (its sandbox must see it)
-  let rootLake := root / "lakefile.lean"
-  IO.FS.writeFile rootLake ((← IO.FS.readFile rootLake) ++ s!"require {lower}Impl from \"{rel}/impl\"\n")
-  run "lake" #["update", s!"{lower}Impl"] root
-  IO.println s!"created {dir} (spec package; implementation in {dir}/impl), registered in the judge workspace. Next: write REQUIREMENTS.md (Stage 0)."
+  IO.println s!"created {dir} (spec package; implementation in {dir}/impl). Next: write REQUIREMENTS.md (Stage 0)."
 
 /-- Module name of a source path: `Ledger/Spec/Model.lean` ↦ `Ledger.Spec.Model`. -/
 def moduleOfPath (p : String) : String := ((p.take (p.length - 5)).toString).replace "/" "."
@@ -308,7 +376,7 @@ def audit (cfgPath : FilePath) (allowUnfrozen : Bool) : IO Unit := do
   IO.println "== trust manifest and shell wiring"; trust cfg base
   IO.println (if ← (base / "spec.lock").pathExists then "AUDIT PASSED" else "AUDIT PASSED (UNFROZEN SPEC)")
 
-def usage : String := "usage: mil init [--pure] <AppName> <dir> | solution|judge|contract|check-lock|review|audit <mil.json> | freeze <mil.json> <who> | judge --paranoid <mil.json> | audit --allow-unfrozen <mil.json>"
+def usage : String := "usage: mil init [--pure] <AppName> <dir> | solution|judge|contract|check-lock|review|audit <mil.json> | freeze <mil.json> <who> | judge --paranoid <mil.json> | audit --allow-unfrozen <mil.json> | comparator [--paranoid] <impl_dir> <config.json>"
 
 def main (args : List String) : IO UInt32 := do
   try
@@ -324,6 +392,8 @@ def main (args : List String) : IO UInt32 := do
     | ["audit", c] => audit c false
     | ["audit", "--allow-unfrozen", c] => audit c true
     | ["contract", c] => contract c
+    | ["comparator", i, c] => comparatorCmd i c false
+    | ["comparator", "--paranoid", i, c] => comparatorCmd i c true
     | _ => IO.eprintln usage; return 2
     return 0
   catch e => IO.eprintln s!"mil: {e}"; return 1
