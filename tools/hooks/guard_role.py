@@ -36,13 +36,20 @@ BASH_WRITES = re.compile(r"(>|\btee\b|\bsed\s+-i|\bperl\s+-i|\bmv\b|\bcp\b|\brm\
 
 
 def repo_root(start):
-    d = os.path.abspath(start)
+    """The repository holding `start`: its nearest ancestor that is the framework checkout (holds
+    lean/MakeItLean/Gates.lean) or a git repository (a `.git` directory, or a worktree's `.git`
+    file), so an app in its own repository outside the framework is protected too. Failing both,
+    the nearest app directory (holds mil.json)."""
+    d, app = os.path.abspath(start), None
     while True:
-        if os.path.isfile(os.path.join(d, "lean", "MakeItLean", "Gates.lean")):  # the framework checkout (or a worktree of it)
+        if (os.path.isfile(os.path.join(d, "lean", "MakeItLean", "Gates.lean"))
+                or os.path.exists(os.path.join(d, ".git"))):
             return d
+        if app is None and os.path.isfile(os.path.join(d, "mil.json")):
+            app = d
         parent = os.path.dirname(d)
         if parent == d:
-            return None
+            return app
         d = parent
 
 
@@ -51,7 +58,7 @@ def app_root(full, root):
     repository but not under `templates/` (examples/<app>/, bench/verina/runs/…/<app>/, …).
     None when the path belongs to no app (the framework, LeanKV, templates, docs)."""
     d = full if os.path.isdir(full) else os.path.dirname(full)
-    while d.startswith(root + "/"):
+    while d == root or d.startswith(root + "/"):  # root itself is the app when it is in no repository
         if os.path.isfile(os.path.join(d, "mil.json")):
             rel = os.path.relpath(d, root)
             return None if rel.split(os.sep)[0] == "templates" else d

@@ -2,7 +2,10 @@ import Lake
 open Lake DSL
 
 /-! AppName implementation: the hole, its proof, the generated solution and the CLI. -/
-package appnameImpl
+package appnameImpl where
+  -- share the spec package's dependency clones, so a git-fetched framework is cloned and
+  -- built once (two workspaces with separate clones disagree on which one holds the build)
+  packagesDir := "../.lake/packages"
 
 require appname from ".."
 

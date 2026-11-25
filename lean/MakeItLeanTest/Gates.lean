@@ -3,6 +3,7 @@ import MakeItLeanTest.Bait.Spec
 import MakeItLeanTest.Bait.Good
 import MakeItLeanTest.Bait.Verified
 import MakeItLeanTest.Bait.ShellWiring
+import MakeItLeanTest.Bait.VerifiedLeaf
 
 /-! Negative and positive tests for every gate. The build fails if any gate stops rejecting its
 planted violations, or starts rejecting the well-formed spec. -/
@@ -88,3 +89,19 @@ opaque/partial: BaitVerified.loop
 unsafe: BaitVerified.uns
 -/
 #guard_msgs in #audit_verified MakeItLeanTest.Bait.Verified forbid_imports MakeItLeanTest.Bait.Good MakeItLeanTest.Bait.Shell
+
+/-! Stage 6, "leaves made opaque": verified code that is clean itself but depends on an
+`@[implemented_by]` helper or an `@[extern]` with a body is caught; an `@[extern] opaque` leaf is not. -/
+/--
+error: Verified-code audit FAILED:
+verified code depends on BaitLeaf.externSucc, an @[extern] with a body: the proofs check the body, the program runs the external code
+verified code depends on BaitLeaf.succLeaf, which is @[implemented_by]: the proofs check its body, the program runs other code
+-/
+#guard_msgs in #audit_verified MakeItLeanTest.Bait.VerifiedLeaf forbid_imports MakeItLeanTest.Bait.Shell
+
+/-! An audit that sees nothing fails (a misspelt prefix, or a module not imported). -/
+/--
+error: Verified-code audit FAILED:
+no theorems or definitions found under [MakeItLeanTest.Bait.Nope] (misspelt, or not imported?)
+-/
+#guard_msgs in #audit_verified MakeItLeanTest.Bait.Nope forbid_imports MakeItLeanTest.Bait.Shell

@@ -20,6 +20,28 @@ Each item cost real time in the pilot. Check here before fighting a tactic.
 - **do-notation in `Option`/state monads** does not simplify by itself. After `rw [h1] at h`, use `simp only at h` to beta- and iota-reduce, then continue with the next bind. For `StateT` on `Id`, prove one `run` lemma per primitive operation (by `cases` + `rfl`) and rewrite with those.
 - **`if false = true then …`** stays unreduced: add `Bool.false_eq_true` to `simp only`.
 - **Unused `simp` arguments** are linted. Harmless, but clean them up.
+- **Dot notation needs the full namespace.** For `hs : LState.Good s`, `hs.set` resolves only to a
+  lemma named `LState.Good.set`; a lemma named `Good.set` is not found (Ledger).
+- **`←` inside a pure expression is rejected** ("nested action must be nested inside a `do`
+  expression"), e.g. `pure (if ← p.pathExists then a else b)`. Write `if ← p.pathExists then pure a else pure b`.
+
+## Lake and the runtime (4.36)
+- **Spec and implementation packages need distinct module roots** (`LeanKV` / `LeanKVImpl`).
+  Otherwise Lean looks for the implementation's modules in the spec package's build directory.
+- **An executable named like a `require`d package collides** in the lakefile: set `exeName`.
+- **Functions linked from C (`@[extern]`) do not run in the interpreter** (`#eval`). Test them through
+  the built executable (the apps' `impl/test.sh`).
+- **No `fsync` or `seek` in the standard library** (and `truncate` cuts only at the current
+  position). A durable store needs a small trusted C leaf (LeanKV `impl/c/lkv_io.c`).
+- **Recursion over bytes overflows the stack on large inputs** (LeanKV: a 60 MB batch). The proofs
+  cannot see this; a benchmark at the input limits does. Use tail recursion or array loops with
+  `termination_by`, proven equal to the list reference.
+- **Two workspaces, two clones.** A spec package and its `impl/` package are separate Lake
+  workspaces. With git dependencies each clones its own copy, and the build products disagree
+  ("unknown module prefix" for a module that built fine). The templates set
+  `packagesDir := "../.lake/packages"` in `impl/` so there is one clone (Phase 5).
+- **Benchmarks: the compiler hoists pure computations out of a timing loop** ("0 µs"). Vary the
+  input on every repetition, and build request text before the timer starts.
 
 ## Patterns that worked
 - **Mirror the reference.** Write fast code function by function in the shape of the spec function it replaces. The equality proof is then a step-by-step correspondence (the pilot's `ByteArray` decoder matched the list spec layer by layer).

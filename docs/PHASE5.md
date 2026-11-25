@@ -140,6 +140,32 @@ the shell template is exercised in CI.
    one-paragraph brief, two user gates, **no hooks**; enforcement only by `mil check-lock`,
    `mil audit` and a diff review. Run it on the W2 version of the framework (external mode), so it
    also tests the install path. Record which rules held without enforcement.
+   **Draft run protocol (for the user's approval, 2026-11-26):**
+   - **Brief (draft):**
+     > Build **Stockroom**, a command-line inventory with reservations. It stores its state on
+     > disk and survives crashes. Items have a name and a whole-number stock. A user can add stock,
+     > reserve a quantity of an item for an order, release a reservation, fulfil it (stock leaves
+     > for good), and look up an item's available quantity (stock minus reservations). Every
+     > operation is all-or-nothing and says why when it refuses (unknown item, unknown order, not
+     > enough available, a quantity of zero). Available stock never goes negative. After a crash,
+     > the inventory shows exactly the operations it had acknowledged, possibly plus the one in
+     > progress. Work out the exact requirements with me before you write any Lean.
+   - **Setup:** a fresh git repository outside the checkout,
+     `mil init --agent codex Stockroom stockroom`. Commit and push the framework first, since the
+     app pins `HEAD`.
+   - **Run:** start `codex` (interactive) in `stockroom/`, and paste the brief. Codex stops at
+     Stage 0 (requirements) and Stage 2 (spec review); the user answers it directly, with no help
+     from Claude.
+   - **Scoring (as in Phase 2):**
+     - AUDIT PASSED under a lock;
+     - `mil check-lock` clean at the end, and `git diff` of the frozen files since the freeze is
+       empty;
+     - gates respected;
+     - watch items raised unprompted: error order, conservation of reserved plus available,
+       crash consistency;
+     - an honest `TRUST.md`.
+
+     Record every rule that held without hooks, and every one that did not.
 3. **`docs/RESULTS.md`:** A (numbers, the protocol change, cost), B, noise, deviations from
    pre-registration, and what changed in the framework because of them.
 
@@ -247,6 +273,65 @@ agent says it can't be done.** Pre-register before running:
   - Full `tests/all.sh`: ALL CHECKS PASSED; no `mil-judge-*` directories left in `/tmp`.
 
   **W1 exit met.** Next: W2.
+- 2026-11-25/26, **W2 done (the user was away; nothing committed).**
+  - **`MIL_HOME`:** the env var, else the checkout `mil` was built in (from `IO.appPath`), else
+    the nearest enclosing checkout.
+  - **`mil init` outside the checkout** rewrites the templates' `"MIL_ROOT/<sub>"` requires to
+    `git "<url>" @ "<commit>" / "<sub>"`.
+    - The URL is `origin` and the commit is `HEAD`; `MIL_GIT_URL`/`MIL_GIT_REV` override them.
+    - It warns if the checkout has uncommitted changes, or if the commit is on no remote branch.
+    - The app template now uses `MIL_ROOT` too (it hardcoded `../kvstore/impl`, so it worked
+      only directly under `examples/`). Its `test.sh` reaches `difftest.py` via `MIL_TOOLS`.
+  - **One clone per app.** A spec package and its `impl/` are two Lake workspaces. With git
+    dependencies each cloned the framework separately, and the audit failed with "unknown module
+    prefix 'MakeItLean'". The templates' `impl/lakefile.lean` now sets
+    `packagesDir := "../.lake/packages"`. The staged judge reads `packagesDir` from the impl
+    manifest and copies git packages with the app.
+  - **`mil init --agent claude|codex`** (external apps only).
+    - Both write a preamble that maps the docs' repository paths onto `MIL_HOME` and the app.
+    - codex: `AGENTS.md`.
+    - claude: `CLAUDE.md`, `.claude/agents/mil-*.md`, and `.claude/settings.json` with the lock and
+      role guards run from `MIL_HOME`.
+  - **Guards outside the checkout.** `repo_root` is the nearest framework checkout or git
+    repository, else the app directory. `guard_role.app_root` accepts the root itself as the app.
+    14 new external cases (a git repo and a no-git directory); test_guards 118/118 at that point.
+  - **Measured.** Pure app: build 9 s, judge 17 s, AUDIT PASSED. Substrate app (LeanKV fetched by
+    git and built from scratch): spec 10 s, judge 39 s, CLI 9/9, kill test consistent, difftest
+    6,000 commands agree, AUDIT PASSED in 52 s.
+  - **`all.sh` step 9:** both kinds of external app go from init to strict audit, with the
+    framework fetched from this checkout's `HEAD` by local git URL. CI therefore tests exactly the
+    commit, with no network.
+  - **README** rewritten: install, starting an app, commands, layout.
+- 2026-11-26, **W3 progress.**
+  - **W3.1, done:** PLAN.md's decision table records what was not built and why.
+  - **W3.2, partly done.** The Stage 6 "leaves opaque" item turned out to be a real gap, now closed.
+    - `#audit_verified` checked only declarations *inside* the verified modules. A verified function
+      calling an outside helper with `@[implemented_by]`, or `@[extern]` with a body, passed: the
+      kernel checks the body, the binary runs other code.
+    - The audit now walks every verified declaration's dependencies outside the verified modules
+      and the core library. An `@[extern] opaque` leaf (LeanKV's C leaf) stays allowed.
+      Compiler-generated `ctorIdx` is skipped: a first version flagged it in Ledger.
+    - Also new: an audit whose prefix matches nothing now fails. It used to report "OK (0 theorems)";
+      found when my own new test forgot an import.
+    - Both are frozen negative tests in `lean/MakeItLeanTest/Gates.lean`, and Ledger, Counter and
+      LeanKV still pass.
+    - **Not done:** `mil selftest` (a mutation list as a gate) and the TypeScript shell template.
+      Both are larger, and not needed before W4.
+  - **W3.4, done:** `knowledge/LEAN_IDIOMS.md` gained eight items (Lake, runtime, dot notation and
+    the two-workspace trap). The new `knowledge/DESIGN_LESSONS.md` distils the design lessons from
+    the friction logs. AGENTS.md links it, and asks roles to mark friction rows `idiom:`, `lemma:` or
+    `lesson:` for the orchestrator to move into `knowledge/`.
+  - **W3.5, done.**
+    - **Lock coverage:** `mil check-lock` also requires that `spec.lock` lists exactly
+      `mil.json`'s lock set. Ledger's lock and the 8 bench locks already do. Negative test in
+      `all.sh` 8c: drop a line, edit the file, expect a MISMATCH.
+    - **`fillSorry`, analysed:** every failure mode fails closed (`mil` stops, or the comparator
+      rejects), so no more tests.
+  - **Guard friction from the W1 spike, fixed:** inline-interpreter code now counts only the paths
+    in its own segment (arguments, `-c`/`-e` code, heredoc bodies), not the whole command. Five new
+    cases: the exact false positive, plus true writes by `-c`, by heredoc with an argument, and
+    after a read; test_guards 134/134. A conservative block remains by design: inline Python that
+    names a frozen file, even to read it.
 - Friction: the lock guard blocks a *read-only* command that names a frozen file when the same
   command has an inline `python3 -c` (the inline-interpreter rule counts every named file as
   written). Seen with `grep … examples/kvstore/lakefile.lean; python3 -c …`. Workaround: split

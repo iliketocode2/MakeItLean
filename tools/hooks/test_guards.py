@@ -36,6 +36,11 @@ def cases(root, label):
         L("Edit", {"file_path": f(IMPL_LAKE)}, 0, "edit unfrozen impl lakefile")
         L("Bash", {"command": f"cat {f(SPEC)} > /dev/null"}, 0, "read frozen spec, stdout to /dev/null")
         L("Bash", {"command": f"grep x {f(SPEC)} 2>&1 | head"}, 0, "read frozen spec with 2>&1")
+        L("Bash", {"command": f"python3 -c \"open('{f(SPEC)}','w')\""}, 2, "python -c writes frozen spec")
+        L("Bash", {"command": f"python3 - {f(SPEC)} <<'PY'\nimport sys; open(sys.argv[1],'w')\nPY"}, 2, "inline python writes a frozen file passed as an argument")
+        L("Bash", {"command": f"grep -n require {f(LAKE)}; python3 -c \"open('{f(LAKE)}','w')\""}, 2, "read, then python -c writes the same frozen file")
+        # Phase 5 false positive: a read in one segment, unrelated inline python in another
+        L("Bash", {"command": f"grep -n require {f(LAKE)}; python3 -c \"import json; print(json.load(open('mil.json')))\""}, 0, "grep a frozen file, then unrelated python -c (was a false block)")
         # Phase 3 false positives
         L("Bash", {"command": f"cd {f('examples/ledger/impl')} && python3 - <<EOF\nopen('lakefile.lean','w')\nEOF"}, 0, "inline python edits impl lakefile after cd (was a false block)")
         L("Bash", {"command": f"cat > /tmp/notes.md <<'EOF'\nmentions {LAKE} and {SPEC} > x\nEOF"}, 0, "heredoc to scratch only mentions frozen paths (was a false block)")
@@ -104,6 +109,33 @@ def read_cases():
     return out
 
 
+def external_cases(base):
+    """Apps outside the framework checkout (Phase 5 W2): one in its own git repository, one in no
+    repository at all. Their frozen files and role areas must be protected all the same."""
+    out = []
+    for kind in ("git", "nogit"):
+        repo = os.path.join(base, kind)
+        app = os.path.join(repo, "myapp")
+        os.makedirs(os.path.join(app, "MyApp", "Spec"), exist_ok=True)
+        os.makedirs(os.path.join(app, "impl", "MyAppImpl"), exist_ok=True)
+        if kind == "git":
+            subprocess.run(["git", "init", "-q", repo], check=True)
+        open(os.path.join(app, "mil.json"), "w").write("{}\n")
+        open(os.path.join(app, "MyApp", "Spec", "Model.lean"), "w").write("-- spec\n")
+        open(os.path.join(app, "spec.lock"), "w").write("# Frozen spec. Signed off by: test\n0  MyApp/Spec/Model.lean\n0  mil.json\n")
+        spec, impl = os.path.join(app, "MyApp", "Spec", "Model.lean"), os.path.join(app, "impl", "MyAppImpl", "Core.lean")
+        L = lambda tool, inp, want, d: out.append(("guard_locked.py", {"tool_name": tool, "cwd": repo, "tool_input": inp}, want, f"external {kind}: {d}"))
+        R = lambda role, tool, inp, want, d: out.append(("guard_role.py", {"agent_type": role, "tool_name": tool, "cwd": repo, "tool_input": inp}, want, f"external {kind}: {role} {d}"))
+        L("Edit", {"file_path": spec}, 2, "edit frozen spec file")
+        L("Write", {"file_path": os.path.join(app, "mil.json")}, 2, "write frozen mil.json")
+        L("Write", {"file_path": os.path.join(app, "spec.lock")}, 2, "write spec.lock itself")
+        L("Bash", {"command": "echo x > myapp/MyApp/Spec/Model.lean"}, 2, "redirect into frozen spec file")
+        L("Edit", {"file_path": impl}, 0, "edit unfrozen impl file")
+        R("mil-implementer", "Edit", {"file_path": spec}, 2, "edits the spec area")
+        R("mil-implementer", "Write", {"file_path": impl}, 0, "writes the impl area")
+    return out
+
+
 def main():
     # a cancelled run (SIGTERM, e.g. a CI timeout) still cleans up: turn it into a normal exit
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
@@ -115,7 +147,10 @@ def main():
         app = os.path.join(M, "bench", f"zguardapp-{os.getpid()}")
         os.makedirs(app, exist_ok=True)
         open(os.path.join(app, "mil.json"), "w").write("{}\n")
-        all_cases = cases(M, "main") + cases(wt, "worktree") + read_cases() + bench_app_cases(app)
+        import tempfile
+        ext = tempfile.mkdtemp(prefix="guardtest-ext-")
+        all_cases = (cases(M, "main") + cases(wt, "worktree") + read_cases() + bench_app_cases(app)
+                     + external_cases(ext))
         fails = 0
         for name, payload, want, desc in all_cases:
             rc = hook(name, payload)
@@ -128,6 +163,8 @@ def main():
         subprocess.run(["git", "-C", M, "worktree", "remove", "--force", wt], check=False)
         import shutil
         shutil.rmtree(os.path.join(M, "bench", f"zguardapp-{os.getpid()}"), ignore_errors=True)
+        if "ext" in locals():
+            shutil.rmtree(ext, ignore_errors=True)
 
 
 if __name__ == "__main__":

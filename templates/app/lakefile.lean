@@ -4,8 +4,8 @@ open Lake DSL
 /-! AppName: a worked example of an app on the LeanKV substrate (spec package). -/
 package appname
 
-require leankvImpl from "../kvstore/impl"
-require makeitlean from "../../lean"
+require leankvImpl from "MIL_ROOT/examples/kvstore/impl"
+require makeitlean from "MIL_ROOT/lean"
 
 @[default_target]
 lean_lib AppNameSpec where

@@ -210,7 +210,26 @@ def inline_script_paths(cmd, cwd):
             here = resolve(ops[0], here) if ops else os.path.expanduser("~")
             continue
         inline = prog in INTERPRETERS and (
-            any(a in ("-c", "-e", "-", "--eval") for a in words[1:]) or "<<" in cmd)
+            any(a in ("-c", "-e", "-", "--eval") for a in words[1:]) or "<<" in seg)
         if inline:
-            out += [resolve(m, here) for m in PATHLIKE.findall(cmd) if not m.startswith("-")]
+            # only this segment's own text: its arguments, its `-c`/`-e` code and the heredoc
+            # bodies (an unrelated read elsewhere in the command is not this code's write)
+            text = " ".join(words[1:])
+            if "-" in words[1:] or "<<" in seg:
+                text += " " + heredoc_bodies(cmd)
+            out += [resolve(m, here) for m in PATHLIKE.findall(text) if not m.startswith("-")]
     return out
+
+
+def heredoc_bodies(cmd):
+    """The text of every heredoc body in the command (what strip_heredocs removes)."""
+    out, lines, i = [], cmd.split("\n"), 0
+    while i < len(lines):
+        delims = re.findall(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1", lines[i])
+        i += 1
+        for _, word in delims:
+            while i < len(lines) and lines[i].strip() != word:
+                out.append(lines[i])
+                i += 1
+            i += 1
+    return "\n".join(out)

@@ -220,11 +220,40 @@ compiles to), `@[implemented_by]` or `@[extern]`; and no such module imports a m
       if ci matches .thmInfo _ then nThm := nThm + 1 else nDef := nDef + 1
       for a in ← liftCoreM (collectAxioms n) do
         unless standardAxioms.contains a do bad := bad.push s!"axiom {a} used by {n}"
+  -- Stage 6, "leaves made opaque": verified code must not depend, through helpers outside the
+  -- verified modules, on a constant whose compiled code differs from the body the kernel checks:
+  -- `@[implemented_by]`, or `@[extern]` on a definition that has a body. An `@[extern] opaque`
+  -- leaf is fine, since no proof can see its behaviour. The core library (Init, Std, Lean) is the
+  -- trusted base and is not walked.
+  let core (m : Name) := [`Init, `Std, `Lean, `Lake].any (·.isPrefixOf m)
+  let mut seen : NameSet := {}
+  let mut todo : Array Name := #[]
+  for (n, ci) in env.constants.toList do
+    if let some m := moduleOf env n then
+      if verified m && !n.isInternalDetail then todo := todo ++ ci.getUsedConstantsAsSet.toList.toArray
+  while todo.size > 0 do
+    let c := todo.back!
+    todo := todo.pop
+    if seen.contains c then continue
+    seen := seen.insert c
+    let some m := moduleOf env c | continue
+    if verified m || core m then continue
+    -- compiler-generated (`ctorIdx` is `@[implemented_by]` by construction), as in the loop above
+    if c.isInternalDetail || (`ctorIdx).isSuffixOf c then continue
+    let some ci := env.find? c | continue
+    if (Compiler.implementedByAttr.getParam? env c).isSome then
+      bad := bad.push s!"verified code depends on {c}, which is @[implemented_by]: the proofs check its body, the program runs other code"
+    else if isExtern env c && ci matches .defnInfo _ then
+      bad := bad.push s!"verified code depends on {c}, an @[extern] with a body: the proofs check the body, the program runs the external code"
+    todo := todo ++ ci.getUsedConstantsAsSet.toList.toArray
   for i in [0:env.header.moduleNames.size] do
     let m := env.header.moduleNames[i]!
     if verified m then
       for imp in env.header.moduleData[i]!.imports do
         if shells.any (·.isPrefixOf imp.module) then bad := bad.push s!"{m} imports {imp.module}"
+  -- an audit that sees nothing proves nothing (a misspelt prefix, a module not imported)
+  if nThm + nDef == 0 then
+    bad := bad.push s!"no theorems or definitions found under {pfxs.toList} (misspelt, or not imported?)"
   if bad.isEmpty then
     logInfo m!"Verified-code audit: OK ({nThm} theorems and {nDef} definitions on standard axioms; no unsafe/partial/opaque/implemented_by/extern; {shells.toList} not imported)"
   else throwError m!"Verified-code audit FAILED:\n{"\n".intercalate (bad.qsort (· < ·)).toList}"

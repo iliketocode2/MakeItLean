@@ -61,7 +61,8 @@ if [ $QUICK -eq 0 ]; then
   step "8. A fresh app from the template: init, judge, tests, freeze, strict audit"
   APP="$ROOT/examples/ztemplatecheck"
   PAPP="$ROOT/bench/ztemplatecheck/zpurecheck"   # deeper than examples/: exercises MIL_ROOT
-  restore() { rm -rf "$APP" "$ROOT/bench/ztemplatecheck"; }
+  EXT="$(mktemp -d -t mil-ext-XXXXXX)"   # step 9: apps outside the checkout
+  restore() { rm -rf "$APP" "$ROOT/bench/ztemplatecheck" "$EXT"; }
   trap restore EXIT
   check 'created' bash -c "cd '$ROOT' && '$MIL' init Ztemplatecheck examples/ztemplatecheck"
   check 'ACCEPTED' "$MIL" judge "$APP/mil.json"
@@ -93,6 +94,30 @@ PY
     [ ! -e "$ROOT/$f" ] || { echo "FAILED: $f appeared at the repository root"; exit 1; }
   done
   echo "no root judge workspace: ok"
+  # lock coverage: drop a frozen file's line from spec.lock, then edit that file
+  M="Zpurecheck/Spec/Model.lean"
+  grep -v " $M\$" "$PAPP/spec.lock" > "$PAPP/spec.lock.tmp" && mv "$PAPP/spec.lock.tmp" "$PAPP/spec.lock"
+  echo "-- tampered" >> "$PAPP/$M"
+  if "$MIL" check-lock "$PAPP/mil.json" >/tmp/mil-lock.$$ 2>&1; then echo "FAILED: a line dropped from spec.lock went unnoticed"; exit 1; fi
+  grep -q 'does not cover exactly' /tmp/mil-lock.$$ || { echo "FAILED: wrong lock error"; cat /tmp/mil-lock.$$; exit 1; }
+  rm -f /tmp/mil-lock.$$; echo "lock coverage: a dropped spec.lock line is a MISMATCH"
+
+  step "9. Apps outside the checkout: framework by pinned git require (this checkout's HEAD)"
+  # Only committed framework code reaches these apps (they clone HEAD): CI tests exactly the commit.
+  export MIL_GIT_URL="$ROOT" MIL_GIT_REV="$(git -C "$ROOT" rev-parse HEAD)"
+  check 'created|wrote' bash -c "cd '$EXT' && '$MIL' init --agent claude Zextapp zextapp"
+  grep -q "from git \"$ROOT\" @ \"$MIL_GIT_REV\"" "$EXT/zextapp/lakefile.lean" || { echo "FAILED: no pinned git require"; exit 1; }
+  python3 -I -m json.tool "$EXT/zextapp/.claude/settings.json" >/dev/null || { echo "FAILED: settings.json"; exit 1; }
+  check 'Build completed' bash -c "cd '$EXT/zextapp' && lake build"
+  check 'ACCEPTED' "$MIL" judge "$EXT/zextapp/mil.json"
+  check 'passed|consistent|agree' "$EXT/zextapp/impl/test.sh"
+  check 'Frozen' "$MIL" freeze "$EXT/zextapp/mil.json" ci-external-check
+  check 'AUDIT' "$MIL" audit "$EXT/zextapp/mil.json"
+  check 'created|wrote' bash -c "cd '$EXT' && '$MIL' init --pure --agent codex Zextpure zextpure"
+  check 'ACCEPTED' "$MIL" judge "$EXT/zextpure/mil.json"
+  check 'Frozen' "$MIL" freeze "$EXT/zextpure/mil.json" ci-external-check
+  check 'AUDIT' "$MIL" audit "$EXT/zextpure/mil.json"
+  unset MIL_GIT_URL MIL_GIT_REV
 fi
 
 printf '\nALL CHECKS PASSED\n'
