@@ -194,3 +194,32 @@ agent says it can't be done.** Pre-register before running:
 
   Bench re-runs are not supported until W1: `convert.py` still calls `mil init`, which registers
   the app in the root lakefile. Step 0 catches it if that is ever committed.
+- 2026-11-25, W0 committed by the user (`c72d89f`, merge `a57a6b4`); **CI green**.
+- 2026-11-25, **W1 spike: PASSED with option (a), copy.** Staging script (scratchpad, not in the
+  repo): copy only the app's packages with `cp -a` (sources + prebuilt `.lake`) to a directory
+  **outside the repository**, at their repo-relative paths; generate a lakefile with one `require`;
+  `lake update`; build; `lake comparator`. Locked lakefiles resolve unchanged; the generated
+  manifest holds only relative paths.
+
+  | App | Verdict (`--paranoid`, 6 kernels) | Stage | Build + judge | Size |
+  |---|---|---|---|---|
+  | LeanKV | ACCEPTED | 1.7 s | 51.9 s | 56 MB |
+  | Ledger | ACCEPTED | 2.0 s | 22.6 s | 79 MB |
+  | Counter | ACCEPTED | 1.6 s | 22.5 s | 74 MB |
+  | verina_basic_12 (bench, pure) | ACCEPTED | 1.0 s | 17.6 s | 4.9 MB |
+
+  The builds replay from the copied `.lake` (Counter: 0.5 s, nothing recompiled). The verdicts
+  match the in-repo ones (`all.sh` steps 4–6; PHASE4 for the bench app).
+  - **The judge reads the staged copy:** in staged Counter, a `sorry`, a custom axiom and a
+    weakened statement were each REJECTED (`sorryAx`, `Counter.Spec.cheat`, "statement do not
+    match"); the honest solution was ACCEPTED after restoring it.
+  - **The smoke test passes outside the repository:** `tests/comparator-smoke` copied to a scratch
+    directory, 5/5.
+  - **Option (b), hard links, not pursued:** copying already takes about 2 s. With hard links, Lake's
+    writes into the staged `.lake` could go through the links into the repository's build outputs.
+  - Not yet shown: two parallel judge runs (W1.3's test). The staged directories share nothing, so
+    no interference is expected.
+- Friction: the lock guard blocks a *read-only* command that names a frozen file when the same
+  command has an inline `python3 -c` (the inline-interpreter rule counts every named file as
+  written). Seen with `grep … examples/kvstore/lakefile.lean; python3 -c …`. Workaround: split
+  the command. To fix in W3: count a file only if the inline code names it.
