@@ -15,8 +15,10 @@ import Lean.Data.Json
     mil check-lock <app>/mil.json     verify the frozen spec is unchanged
     mil review <app>/mil.json         generate SPEC_REVIEW.md from the elaborated spec
     mil contract <app>/mil.json       the spec's holes and obligations are exactly mil.json's
-    mil audit <app>/mil.json          lock (required), spec gates, contract, comparator --paranoid,
-                                      verified-code audit (`--allow-unfrozen` for development runs)
+    mil selftest <app>/mil.json       Stage 5: the shell against the model, with mutants mil chooses
+    mil audit <app>/mil.json          lock (required), spec gates, spec critic, contract, comparator
+                                      --paranoid, verified-code audit, self-test, trust manifest
+                                      (`--allow-unfrozen` for development runs)
 
 Every path in `mil.json` is relative to the directory holding it (the app's spec package).
 -/
@@ -53,6 +55,22 @@ structure AuditCfg where
   substrate : Option SubstrateCfg := none
   deriving Inhabited
 
+/-- Stage 5's self-test settings (`mil.json`'s optional `selftest` object; locked at the freeze).
+The defaults are `mil`'s, and values below the floors in `loadConfig` are refused, so a locked
+config cannot switch the gate off. -/
+structure SelftestCfg where
+  /-- Random command sequences per differential test. -/
+  runs : Nat := 20
+  /-- Commands per sequence. -/
+  length : Nat := 200
+  /-- Mutants sampled from the shell's sources. -/
+  maxMutants : Nat := 30
+  /-- The minimum mutation score (killed / built). Phase 6 D2: 0.7, provisional (Ledger, fully
+  tested, reaches 0.73: its survivors are equivalent mutants or I/O-failure paths that no test can
+  reach without fault injection). -/
+  minScore : Float := 0.7
+  deriving Inhabited
+
 /-- Per-app configuration (`mil.json`). -/
 structure Config where
   /-- Spec aggregator module, e.g. `Counter.Spec` (the comparator's challenge). -/
@@ -76,6 +94,8 @@ structure Config where
   /-- The audit's coverage (`audit` in `mil.json`). Absent: a legacy app, whose own
   `impl/audit.lean` runs only if its hash is in the framework's `lean/legacy_audits.json`. -/
   audit : Option AuditCfg := none
+  /-- The self-test's settings (`selftest` in `mil.json`, optional; defaults otherwise). -/
+  selftest : SelftestCfg := {}
   deriving Inhabited
 
 def die {α} (msg : String) : IO α := throw (IO.userError msg)
@@ -130,12 +150,30 @@ def loadConfig (path : FilePath) : IO Config := do
   if let some a := audit then
     if a.verified.isEmpty then die "mil.json: audit.verified: list at least one verified module prefix"
     if !isPure && a.substrate.isNone then die "mil.json: audit.substrate: a substrate app must name its end-to-end facts"
+  let selftest ← match j.getObjVal? "selftest" with
+    | .error _ => Pure.pure ({} : SelftestCfg)
+    | .ok t => do
+      let d : SelftestCfg := {}
+      let nat (k : String) (dflt floor : Nat) : IO Nat := match t.getObjVal? k with
+        | .error _ => Pure.pure dflt
+        | .ok v => match v.getNat? with
+          | .ok n => if n < floor then die s!"mil.json: selftest.{k}: {n} is below the minimum {floor}" else Pure.pure n
+          | .error e => die s!"mil.json: selftest.{k}: {e}"
+      let minScore ← match t.getObjVal? "min_score" with
+        | .error _ => Pure.pure d.minScore
+        | .ok v => match v.getNum? with
+          | .ok x =>
+            let f := x.toFloat
+            if f < 0.5 || f > 1.0 then die s!"mil.json: selftest.min_score: {f} is outside 0.5–1" else Pure.pure f
+          | .error e => die s!"mil.json: selftest.min_score: {e}"
+      Pure.pure { runs := ← nat "runs" d.runs 5, length := ← nat "length" d.length 50,
+                  maxMutants := ← nat "max_mutants" d.maxMutants 10, minScore }
   return { specModule := ← getStr j "spec_module", holeFiles := ← getList j "hole_files",
            implDir, solutionModule := ← getStr j "solution_module",
            solutionImports := ← getList j "solution_imports",
            holes := ← getFills j "holes" fill fillPath,
            obligations := ← getFills j "obligations" fill fillPath, lockFiles := ← getList j "lock_files",
-           pure := isPure, audit }
+           pure := isPure, audit, selftest }
 
 /-- Run a command, streaming its output; fail if it fails. -/
 def run (cmd : String) (args : Array String) (cwd : Option FilePath := none) : IO Unit := do
@@ -686,8 +724,147 @@ def trust (cfg : Config) (base : FilePath) : IO Unit := do
   try run "lake" #["env", "lean", ".mil_trust.lean"] impl
   finally IO.FS.removeFile file
 
-/-- `mil audit`: lock (required unless --allow-unfrozen), spec gates, contract, comparator
-(--paranoid), verified-code audit, trust manifest. -/
+/-- The implementation's module root (`CounterImpl`), from the solution's imports. -/
+def implRoot (cfg : Config) : String :=
+  (cfg.solutionImports.head?.getD "").takeWhile (· != '.') |>.toString
+
+/-- The spec's module root (`Counter`). -/
+def specRoot (cfg : Config) : String := (cfg.specModule.takeWhile (· != '.')).toString
+
+/-- `mil selftest`: Stage 5 as a gate (`tools/selftest.py`). The trusted shell (`Text.lean`,
+`Shell.lean`) is tested against the frozen model with the app's generator, plus its own shell tests
+(`tests/*_test.sh`), and mutants `mil` chooses must be caught. A pure app has no shell and is skipped. -/
+def selftestCmd (cfgPath : FilePath) : IO Unit := do
+  let cfg ← loadConfig cfgPath
+  if cfg.pure then IO.println "selftest: skipped (a pure app has no shell)"; return
+  let impl := (cfgPath.parent.getD ".") / cfg.implDir
+  let root := implRoot cfg
+  let files ← (["Text.lean", "Shell.lean"] : List String).filterM fun f => (impl / root / (f : String)).pathExists
+  if files.isEmpty then die s!"selftest: no shell sources ({root}/Text.lean, {root}/Shell.lean) in {impl}"
+  -- the app's own shell tests (`tests/*_test.sh`): mutants they catch count as killed
+  let tests ← if ← (impl / "tests").isDir then
+      pure (((← (impl / "tests").readDir).map (·.fileName)).filter (·.endsWith "_test.sh") |>.qsort (· < ·))
+    else pure #[]
+  let tests := (tests.map fun t => #["--test", s!"tests/{t}"]).flatten
+  let s := cfg.selftest
+  run "python3" (#["-I", ((← milHome) / "tools" / "selftest.py").toString, "--impl", impl.toString,
+    "--cli-root", root ++ ".Shell", "--oracle-root", root ++ ".Oracle", "--gen", "tests/gen_commands.py",
+    "--runs", toString s.runs, "--length", toString s.length, "--max-mutants", toString s.maxMutants,
+    "--min-score", toString s.minScore] ++ (files.map (fun f => #["--file", s!"{root}/{f}"])).toArray.flatten ++ tests)
+
+/-- Stage 2's spec critic, required: `<SpecRoot>/SpecCritic/` holds at least one `#guard`, and
+every file in it elaborates (a planted bug the spec fails to reject fails its `#guard`). -/
+def specCritic (cfg : Config) (base : FilePath) : IO Unit := do
+  let rel := s!"{specRoot cfg}/SpecCritic"
+  let dir := base / rel
+  unless ← dir.isDir do
+    die s!"spec critic: {dir} is missing. Stage 2 requires planted wrong implementations or models that the spec rejects (agents/AGENTS.md)"
+  let files := ((← dir.readDir).filter (·.path.extension == some "lean")).map (·.fileName) |>.qsort (· < ·)
+  let mut guards := 0
+  for f in files do
+    guards := guards + (((← IO.FS.readFile (dir / f)).splitOn "\n").filter (·.startsWith "#guard")).length
+  if guards == 0 then die s!"spec critic: no `#guard` in {dir}: nothing shows the spec rejects a wrong implementation"
+  for f in files do run "lake" #["env", "lean", s!"{rel}/{f}"] base
+  IO.println s!"spec critic: OK ({files.size} files, {guards} #guard checks)"
+
+/-- The names a Lean source declares, as written after the keyword (`maxOf_precond`, `CState.empty`). -/
+def declaredNames (src : String) : List String :=
+  (src.splitOn "\n").filterMap fun l =>
+    let ws := (l.trimAscii.toString.splitOn " ").filter (· != "")
+    let ws := ws.dropWhile fun w => w.startsWith "@[" || w.endsWith "]" ||
+      ["private", "protected", "noncomputable", "partial", "nonrec"].contains w
+    match ws with
+    | kw :: n :: _ =>
+      if ["def", "theorem", "abbrev", "structure", "inductive", "instance", "class", "lemma", "opaque"].contains kw
+      then some (n.takeWhile (fun c => c != '(' && c != ':' && c != '{' && c != '[')).toString else none
+    | _ => none
+
+/-- The rows of every Markdown table in `text` whose header has a `Status` and an `Evidence`
+column: (first cell, status, evidence). -/
+def trustRows (text : String) : List (String × String × String) := Id.run do
+  let cells (l : String) : List String :=
+    ((l.splitOn "|").drop 1).dropLast.map (·.trimAscii.toString)
+  let mut out := []
+  let mut cols : Option (Nat × Nat) := none
+  for l in text.splitOn "\n" do
+    let t := l.trimAscii.toString
+    unless t.startsWith "|" do cols := none; continue
+    let cs := cells t
+    match cols with
+    | none =>
+      match cs.idxOf? "Status", cs.idxOf? "Evidence" with
+      | some s, some e => cols := some (s, e)
+      | _, _ => pure ()
+    | some (s, e) =>
+      if cs.all (fun c => c.all (fun ch => ch == '-' || ch == ':')) then continue
+      out := out ++ [(cs.headD "", cs.getD s "", " | ".intercalate (cs.drop e))]
+  return out
+
+/-- Stage 6 rules on `TRUST.md` (apps with an `audit` section):
+- a **Proven** row cites at least one name anchored in what the audit checks: a declaration of
+  the frozen spec (other than a hole), an obligation or the proof filling it, a pinned end-to-end
+  theorem, or a framework (`LeanKV.`, `MakeItLean.`) name. A hole and the definition filling it
+  are not evidence. Supporting lemmas may be cited alongside;
+- a **Tested against the model** row cites `selftest`, and a pure app (no shell) has none;
+The surviving-mutant rule is `survivorsExplained`, run after the self-test. -/
+def trustRules (cfg : Config) (base : FilePath) : IO Unit := do
+  let text ← IO.FS.readFile (base / "TRUST.md")
+  let mut declared : List String := []
+  for f in cfg.lockFiles.filter (·.endsWith ".lean") do
+    declared := declared ++ declaredNames (← IO.FS.readFile (base / f))
+  let last (s : String) : String := (s.splitOn ".").getLastD s
+  -- a hole is a definition the implementation supplies, not evidence: neither the hole nor the
+  -- definition filling it anchors a Proven claim; its obligation and the proof filling it do
+  let holeShort := cfg.holes.map fun (h, _) => shortName h cfg.specModule
+  let decls := declared.filter (!holeShort.contains ·)
+  let declaredLast := decls.map last
+  let pinned := match cfg.audit.bind (·.substrate) with
+    | some s => [s.pickOk, s.refines, s.crashConsistent]
+    | none => []
+  let proofs := cfg.obligations.map fun (_, t) => ((t.splitOn " ").headD "")
+  let named := cfg.obligations.map (·.1)
+  let exact := pinned ++ proofs ++ named ++ named.map (shortName · cfg.specModule)
+  let anchored (tok : String) : Bool :=
+    exact.contains tok || decls.contains tok || tok.startsWith "LeanKV." || tok.startsWith "MakeItLean." ||
+    ((!tok.contains '.' || tok.startsWith (specRoot cfg ++ ".")) && declaredLast.contains (last tok))
+  let spans (s : String) : List String :=
+    ((s.splitOn "`").zipIdx.filterMap fun (t, i) => if i % 2 == 1 then some t else none)
+  let mut bad := #[]
+  let rows := trustRows text
+  if rows.isEmpty then bad := bad.push "no requirement table (a header with `Status` and `Evidence` columns)"
+  for (req, status, ev) in rows do
+    let st := (status.replace "*" "").trimAscii.toString.toLower
+    if st.startsWith "proven" && !(spans ev).any anchored then
+      bad := bad.push s!"row {req}: Proven, but cites no name anchored in the frozen spec, the obligations, the pinned facts or the framework"
+    if (st.splitOn "tested against the model").length > 1 then
+      if cfg.pure then bad := bad.push s!"row {req}: Tested against the model, but a pure app has no self-test"
+      else if (ev.splitOn "selftest").length == 1 then
+        bad := bad.push s!"row {req}: Tested against the model, but the evidence does not cite `selftest`"
+  if bad.isEmpty then IO.println s!"Trust rules: OK ({rows.length} rows)"
+  else die s!"Trust rules FAILED:\n{"\n".intercalate bad.toList}"
+
+/-- Every mutant that survived the self-test is named in `TRUST.md` (`Shell.lean:21`), so the
+auditor has explained it (apps with an `audit` section). -/
+def survivorsExplained (cfg : Config) (base : FilePath) : IO Unit := do
+  let text ← IO.FS.readFile (base / "TRUST.md")
+  let mut bad := #[]
+  unless cfg.pure do
+    let f := base / cfg.implDir / ".mil" / "selftest.json"
+    match Json.parse (← IO.FS.readFile f) with
+    | .error e => bad := bad.push s!"{f}: {e}"
+    | .ok j =>
+      let surv := ((j.getObjVal? "mutants").toOption.bind (·.getObjValAs? (Array Json) "survived" |>.toOption)).getD #[]
+      for m in surv do
+        let file := (m.getObjValAs? String "file").toOption.getD "?"
+        let line := (m.getObjValAs? Nat "line").toOption.getD 0
+        let key := s!"{(FilePath.mk file).fileName.getD file}:{line}"
+        if (text.splitOn key).length == 1 then
+          bad := bad.push s!"surviving mutant {key} ({(m.getObjValAs? String "from").toOption.getD ""} → {(m.getObjValAs? String "to").toOption.getD ""}) is not explained in TRUST.md"
+  if bad.isEmpty then IO.println "Surviving mutants: all explained in TRUST.md"
+  else die s!"Surviving mutants not explained in TRUST.md:\n{"\n".intercalate bad.toList}"
+
+/-- `mil audit`: lock (required unless --allow-unfrozen), spec gates, spec critic, contract,
+comparator (--paranoid), verified-code audit, self-test, trust manifest. -/
 def audit (cfgPath : FilePath) (allowUnfrozen : Bool) : IO Unit := do
   let cfg ← loadConfig cfgPath
   let base := cfgPath.parent.getD "."
@@ -695,12 +872,17 @@ def audit (cfgPath : FilePath) (allowUnfrozen : Bool) : IO Unit := do
   else if allowUnfrozen then IO.println "WARNING: spec not frozen (no spec.lock); this audit is not a release check"
   else die "no spec.lock: the spec was never frozen. Freeze it after sign-off (`mil freeze`), or pass --allow-unfrozen for a development run"
   IO.println "== spec gates"; run "lake" #["build"] base
+  IO.println "== spec critic"; specCritic cfg base
+  if cfg.audit.isSome then IO.println "== trust manifest rules"; trustRules cfg base
   IO.println "== comparator (--paranoid)"; judge cfgPath true
   IO.println "== verified-code audit"; verifiedAudit cfg base
+  unless cfg.pure do IO.println "== self-test (Stage 5)"; selftestCmd cfgPath
   IO.println "== trust manifest and shell wiring"; trust cfg base
+  if cfg.audit.isSome then survivorsExplained cfg base
+  else IO.println "WARNING: legacy app (no `audit` section): the TRUST.md rules are not applied"
   IO.println (if ← (base / "spec.lock").pathExists then "AUDIT PASSED" else "AUDIT PASSED (UNFROZEN SPEC)")
 
-def usage : String := "usage: mil init [--pure] [--agent claude|codex] <AppName> <dir> | solution|judge|contract|check-lock|review|audit <mil.json> | freeze <mil.json> <who> | judge --paranoid <mil.json> | audit --allow-unfrozen <mil.json> | comparator [--paranoid] <impl_dir> <config.json>"
+def usage : String := "usage: mil init [--pure] [--agent claude|codex] <AppName> <dir> | solution|judge|contract|check-lock|review|selftest|audit <mil.json> | freeze <mil.json> <who> | judge --paranoid <mil.json> | audit --allow-unfrozen <mil.json> | comparator [--paranoid] <impl_dir> <config.json>"
 
 def main (args : List String) : IO UInt32 := do
   try
@@ -715,6 +897,7 @@ def main (args : List String) : IO UInt32 := do
     | ["audit", c] => audit c false
     | ["audit", "--allow-unfrozen", c] => audit c true
     | ["contract", c] => contract c
+    | ["selftest", c] => selftestCmd c
     | ["comparator", i, c] => comparatorCmd i c false
     | ["comparator", "--paranoid", i, c] => comparatorCmd i c true
     | _ => IO.eprintln usage; return 2

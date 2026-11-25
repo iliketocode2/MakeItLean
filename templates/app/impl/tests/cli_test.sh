@@ -34,5 +34,17 @@ expect "usage: appname <dir> incr|get <name> | appname <dir> serve" 2 "$S"
 # Persistence across runs (each run reopens the store from disk).
 expect "VALUE 2" 0 "$S" get a
 
+# No arguments at all.
+expect "usage: appname <dir> incr|get <name> | appname <dir> serve" 2
+# serve: one answer per line, exit 0 at the end of input.
+got="$(printf 'incr a\nget a\n' | "$BIN" "$S" serve)"; code=$?
+if [[ "$got" == $'VALUE 3\nVALUE 3' && "$code" == 0 ]]; then pass=$((pass+1))
+else fail=$((fail+1)); echo "FAIL: serve -> '$got' ($code), want 'VALUE 3' twice (0)"; fi
+# A store that cannot be opened (a valid log with a stray byte before it): ERR IO, exit 4.
+C="$D/damaged"
+"$BIN" "$C" incr a >/dev/null
+{ printf 'X'; cat "$C/leankv.log"; } > "$D/log" && mv "$D/log" "$C/leankv.log"
+expect "ERR IO" 4 "$C" get a
+
 echo "cli_test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

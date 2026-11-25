@@ -213,8 +213,12 @@ many kinds of program each one unblocks.
      lock kept as `spec.lock.v1`. Cleaner, but a sign-off for a change with no spec content.
 
    Recommendation: (a), since it keeps the frozen app frozen and the legacy path is closed by hash.
-2. **D2, mutation threshold.** The default `selftest.min_score` for the templates (suggested: 0.8,
-   with every surviving mutant explained in `TRUST.md`).
+2. **D2, mutation threshold. Open; 0.7 provisional** (set in W1 from evidence, for the user to
+   confirm or change). The plan suggested 0.8. Measured: Counter reaches 0.83 at most (20 of 24),
+   Ledger, whose shell is fully tested, 0.73 (22 of 30). Every survivor in both is either an
+   equivalent mutant or an I/O-failure path no test can reach without fault injection, so 0.75 or
+   more would fail well-tested apps. The compensating control: apps with an `audit` section must
+   explain every survivor in `TRUST.md`.
 3. **D3, W2 budget and agent.** Which agent runs the red team and the framework arm (Claude, or
    Codex on the user's OpenAI account as in Experiment B), and a token cap for W2.
 4. **D4, W3 briefs.** The three briefs, written before W3 starts: one control that fits a current
@@ -278,3 +282,60 @@ many kinds of program each one unblocks.
       a new sign-off, or a reviewed hash entry.
     - LeanKV's own audit (`examples/kvstore/tools/audit.sh`) is framework code, not agent-written,
       and is unchanged.
+- 2026-11-25, **W1 (uncommitted).**
+  - **`mil selftest`** (`tools/selftest.py`, run by `mil audit` for every app with a shell):
+    - builds the CLI and the oracle, then **copies the oracle binary aside**: every later run uses
+      that copy, built from the unmutated sources. A mutant in `Text.lean`, which the oracle shares
+      with the shell, is still caught (the old "shared parser" blind spot, closed for mutants);
+    - differential test of `<cli> {dir} serve` against the oracle, plus every `tests/*_test.sh` the
+      app ships (they must pass unmutated);
+    - mutants that `mil` chooses: string literals (mutated at the front, so prefix checks catch
+      them), `==`/`!=`, `&&`/`||`, comparisons, booleans and numbers, at sites outside comments
+      and import lines, evenly sampled up to `max_mutants`. A mutant is killed if the difftest or
+      any shell test fails; one that survives a short difftest gets the full one before it counts
+      as a survivor;
+    - restores every file (also on SIGTERM; refuses to start over a `.mil-orig` backup), rebuilds
+      the CLI, and writes `impl/.mil/selftest.json` (git-ignored).
+    - `mil.json`'s optional `selftest` section (`runs`, `length`, `max_mutants`, `min_score`; in the
+      templates and Counter) is locked; values below floors (5 runs, 50 commands, 10 mutants, score
+      0.5) are refused.
+  - **Spec critic required:** `mil audit` fails unless `<SpecRoot>/SpecCritic/` has at least one
+    `#guard` and every file in it elaborates. Both templates and Counter gained a starter critic
+    (planted wrong translations and models, plus a control `#guard` that the honest one passes).
+    Checked by hand that a `#guard` the spec does not satisfy fails the critic.
+  - **`TRUST.md` rules** (apps with an `audit` section; legacy apps get a warning):
+    - a **Proven** row cites at least one anchored name: a frozen spec declaration other than a
+      hole, an obligation or the proof filling it, a pinned theorem, or a `LeanKV.`/`MakeItLean.`
+      name. A hole and the definition filling it are not evidence;
+    - a **Tested against the model** row cites `selftest`; a pure app may not claim it;
+    - every surviving mutant is named (`Shell.lean:21`) with its reason.
+
+    The table rules run early (right after the critic); the survivor rule after the self-test.
+  - **Tests strengthened, not the gate weakened:** Counter's and the template's `cli_test.sh` gained
+    three checks the first self-test showed missing: the usage exit code with no arguments, the end
+    of `serve` (exit 0), and a store that cannot be opened (`ERR IO`, exit 4). `selftest` also runs
+    every `tests/*_test.sh`, which is what lets Ledger's `serve_test.sh` count.
+  - **Measured:**
+
+    | App | Mutants built | Killed | Score | Survivors |
+    |---|---|---|---|---|
+    | Counter (and the template) | 24 | 20 | 0.83 | `"ERR IO"` in `answer`, two I/O-failure exit codes, one unreachable `return 2` |
+    | Ledger (legacy) | 30 | 22 | 0.73 | one equivalent `&&`, the tail of the usage line (the requirements fix only its prefix), six I/O-failure paths |
+
+    About 4 min per substrate app's self-test, most of it relinking the CLI per mutant.
+  - **The cheat suite caught two bypasses in W1's own first version** (both fixed, both now cheats):
+    1. `selftest.py` printed FAILED but **exited 0** on its early returns, so `mil` saw success: a
+       shell printing a constant (`constant-shell`) passed the audit;
+    2. the anchor rule counted the definition filling a hole as evidence, so a Proven row citing
+       only the implementation function passed (`proven-row-unanchored`).
+  - **Cheat suite:** 13 cheats (W0's 8 plus `no-spec-critic`, `proven-row-unanchored`,
+    `pure-tested-against-model`, `constant-shell`, `survivor-unexplained`), all rejected; about
+    17 min.
+  - **Framework gap found (for W3's list):** a durable shell's I/O-failure paths (a write failing
+    mid-command, a store that opens but then fails) are unreachable by any test, so they are the
+    bulk of every app's survivors. LeanKV's *model* file system has faults; the real shell has no
+    fault injection. A general fix (an injectable failing file layer for the shell's tests) would
+    raise every app's reachable score.
+  - **Not done in W1:** mutating a non-Lean shell (Ledger's TypeScript HTTP layer keeps its own
+    hand-written planted-bug test); a `selftest.json` that `TRUST.md` cites by run (the audit
+    reruns the self-test instead).

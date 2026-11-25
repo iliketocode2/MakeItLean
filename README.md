@@ -66,13 +66,13 @@ Then follow the stages in [agents/AGENTS.md](agents/AGENTS.md):
 | 0 | Requirements (`REQUIREMENTS.md`) | the user approves them |
 | 1–2 | The spec, critic, review and sign-off | `mil review`, then `mil freeze mil.json <who>` |
 | 3–4 | Implementation and proofs | `mil judge mil.json` |
-| 5–6 | Shell, tests, audit and `TRUST.md` | `mil audit mil.json` |
+| 5–6 | Shell, tests, self-test, audit and `TRUST.md` | `mil selftest mil.json`, then `mil audit mil.json` |
 
 ## Commands
 
 ```
 mil init [--pure] [--agent claude|codex] <AppName> <dir>
-mil review | contract | solution | judge [--paranoid] | check-lock | audit [--allow-unfrozen] <app>/mil.json
+mil review | contract | solution | judge [--paranoid] | check-lock | selftest | audit [--allow-unfrozen] <app>/mil.json
 mil freeze <app>/mil.json <who>
 mil comparator [--paranoid] <impl_dir> <config.json>
 ```

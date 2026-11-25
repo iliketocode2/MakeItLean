@@ -21,10 +21,16 @@ Exit 0 when every run agrees; 1 on the first disagreement (after shrinking); 2 o
 import argparse, importlib.util, random, shlex, subprocess, sys, tempfile
 
 
+TIMEOUT = 600
+
+
 def run(cmd, lines, tmp_root):
     with tempfile.TemporaryDirectory(dir=tmp_root) as d:
         argv = [a.replace("{dir}", d + "/state") for a in shlex.split(cmd)]
-        p = subprocess.run(argv, input="".join(l + "\n" for l in lines), capture_output=True, text=True, timeout=600)
+        try:
+            p = subprocess.run(argv, input="".join(l + "\n" for l in lines), capture_output=True, text=True, timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
+            return [], -1, f"timed out after {TIMEOUT} s"
         return p.stdout.splitlines(), p.returncode, p.stderr
 
 
@@ -64,7 +70,11 @@ def main():
     ap.add_argument("--runs", type=int, default=50)
     ap.add_argument("--length", type=int, default=200)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--timeout", type=int, default=600, help="seconds per sequence and side")
+    ap.add_argument("--no-shrink", action="store_true", help="report the first disagreement unshrunk")
     args = ap.parse_args()
+    global TIMEOUT
+    TIMEOUT = args.timeout
     spec = importlib.util.spec_from_file_location("difftest_gen", args.gen)
     if spec is None or spec.loader is None:
         print(f"cannot load generator {args.gen}"); sys.exit(2)
@@ -76,7 +86,7 @@ def main():
             lines = gen.gen(rng, args.length)
             total += len(lines)
             if disagree(args.sut, args.oracle, lines, tmp_root):
-                small = shrink(args.sut, args.oracle, lines, tmp_root)
+                small = lines if args.no_shrink else shrink(args.sut, args.oracle, lines, tmp_root)
                 i, got, want = disagree(args.sut, args.oracle, small, tmp_root)
                 print(f"difftest: DISAGREEMENT in run {r} (seed {args.seed}), shrunk to {len(small)} commands:")
                 for j, l in enumerate(small):
