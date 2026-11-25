@@ -1,4 +1,4 @@
-# Phase 6: hold the guarantee under attack, then choose a direction (2026-11-25; the user started W0 with D1 (a); D2–D4 open)
+# Phase 6: hold the guarantee under attack, then test it on different kinds of program (2026-11-25; the user started W0 with D1 (a); D2–D4 open)
 
 Source: the adversarial review of 2026-11-25. Phases 1–5 showed that agents *can follow* the
 workflow (Ledger, Experiment B). They did not show that the workflow *cannot be gamed*, and the
@@ -6,7 +6,10 @@ review found that it can: `mil audit` passed an app whose binary runs code the p
 
 **Goal.** An AUDIT PASSED means exactly what `TRUST.md` says, even when the agent is trying to
 cheat, and an experiment that could come out against the framework measures whether that holds.
-Phase 6 ends with a recorded decision on which way the framework grows next.
+Phase 6 then measures how general the framework is: a developer describes a new program, of any
+kind, and agents build it spec-first in Lean, proven against the approved spec, and faster than
+the spec's reference where a proof allows it (welcome, not required). It ends with the list of
+what stops that today, which becomes Phase 7.
 
 Order: **W0 → W1 → W2 → W3.** W0 fixes the confirmed hole and is useful on its own if the budget
 runs out after it.
@@ -21,7 +24,7 @@ runs out after it.
 | Q5 | **The spec critic is not a gate.** `mil review` notes a missing `SpecCritic/`, but `mil audit` does not require it. | `Main.lean` `review` | W1.2 |
 | Q6 | **The trust gate checks names, not claims.** `#assert_trust_cites` only checks that a cited name exists. A "Proven" row can cite a weak theorem defined in the impl; a "Tested" row needs no evidence `mil` has seen. | `lean/MakeItLean/Gates.lean` `#assert_trust_cites` | W1.3 |
 | Q7 | **The central claim is still untested (PHASE5 P11).** No experiment has put an agent under pressure, where cheating is the only route to success. | `docs/RESULTS.md`, "Open limitations" | W2 |
-| Q8 | **The framework is too narrow for complex projects.** Two app shapes (one pure function; one LeanKV command per app command); no compaction; no data migration between spec versions; no path for existing codebases; app-level "proof-licensed optimization" is empty, since AGENTS.md has the implementation reuse the spec's decision function. | `templates/`, `examples/kvstore/REQUIREMENTS.md` §8–9, `agents/AGENTS.md` | W3 (decide, not build) |
+| Q8 | **The framework is too narrow for complex projects.** Two app shapes (one pure function; one LeanKV command per app command); no compaction; no data migration between spec versions; no path for existing codebases; app-level "proof-licensed optimization" is empty, since AGENTS.md has the implementation reuse the spec's decision function. | `templates/`, `examples/kvstore/REQUIREMENTS.md` §8–9, `agents/AGENTS.md` | W3 (measure, not build) |
 
 ## Fixed constraints
 - **Frozen locks stay untouched.** `ledger-v1`'s `spec.lock` covers its `mil.json`, which has none of
@@ -131,23 +134,50 @@ in this file before any run.
 **Exit:** a pre-registered result written to RESULTS.md that could have come out against the
 framework.
 
-## W3: choose the direction (1 spike session + a decision)
-Phase 6 does not build breadth (Q8); it decides which breadth to build, from one spike.
-- **Spike: a Lean model as the oracle for existing code.** A small existing TypeScript module (a rate
-  limiter or a shopping cart, about 200 lines, not written for this framework) gets a Lean spec and
-  model, an oracle, and `mil selftest` against the existing code, **with no Lean implementation**.
-  This may become `mil init --oracle`. Record:
-  - the time and tokens to reach a passing selftest;
-  - the size of `SPEC_REVIEW.md` and the user's review time;
-  - what the difftest and the mutation score found in the existing code.
-- **The decision** (the user's), recorded in PLAN.md's decision table:
-  - **(a) Breadth for new Lean apps:** a general durable state machine (PHASE2's deferred option A)
-    instead of one KV command per app command, LeanKV compaction (R13), and a data-migration step
-    between spec versions (a proven `migrate : State_v1 → State_v2` plus a log rewrite);
-  - **(b) Oracle mode for existing code:** the spike made into a template, for TypeScript, then
-    Python; proofs stay in the spec and model, and the existing code is tested against them.
+## W3: how general is the framework? (about 3 sessions + write-up)
+MakeItLean is meant to be a general tool: a developer describes a **new program of any kind**, and
+agents build it spec-first in Lean (user decision, 2026-11-25). The framework today supports two
+shapes only: one pure function (`mil init --pure`) and a command-line app whose every command is one
+LeanKV command (`mil init`). W3 measures how far that is from "any kind of program", without
+designing anything for a particular program.
 
-**Exit:** the spike's measurements are in this file; the decision is in PLAN.md.
+### The briefs (pre-registered, D4)
+Three short briefs (one paragraph each, like Experiment B's), written and frozen **before** W3
+starts, each a different kind of program, and none chosen to suit the existing templates:
+- one that fits a current shape, as a control (for example, a small durable service);
+- two that do not (suggestions: a batch tool that reads and writes files, such as a CSV
+  aggregator; a library with several related functions and shared data structures, such as an
+  interval scheduler or a small expression evaluator).
+
+### Rules
+- **The framework is frozen during W3**, except bug fixes. Nothing is built for a brief. A brief
+  that does not fit stops at the point where it stops fitting, and that point is the finding.
+- **Normal stages and gates:** the user approves each brief's requirements (Stage 0) and spec
+  (Stage 2); W0/W1 gates apply.
+- **Optimisation is not required.** The implementer may write any implementation it can prove equal
+  to the spec's reference; whether it does, and what it gains, is measured, not demanded.
+- **Every blocker and workaround is logged** in the app's `FRICTION.md`. A workaround inside an
+  app is something the framework should have provided.
+
+### Measurements, the same for every brief
+- How far it got: AUDIT PASSED, or the stage and reason it stopped.
+- Fit: which template it started from and what had to change around it.
+- Cost: time, tokens, and the user's gate time (with the size of `SPEC_REVIEW.md`).
+- Proof size against code size.
+- **Speed against the spec's own reference.** Every app's spec has an executable reference model,
+  so "implementation vs reference" is measurable for any program, with the template benchmark
+  harness. A plain implementation in a mainstream language is an optional second point of
+  comparison.
+
+### From findings to Phase 7
+Each blocker is stated in its general form (for example, "a program that reads input files has no
+template and no trusted I/O shell", not "the CSV tool needed X") and assigned to a layer: template,
+substrate, library (`lean/`), gate (`mil`) or instructions. A blocker counts as a framework gap
+if it stops a whole kind of program or appears in two briefs.
+
+**Exit:** each brief reached AUDIT PASSED or stopped at a recorded blocker; the measurements and
+the gap list are in this file; **a Phase 7 plan is drafted from the framework gaps**, ordered by how
+many kinds of program each one unblocks.
 
 ## Also in this phase (small, any time after W0)
 - **Toolchain bump procedure** (promised in PLAN.md, never written): a script that bumps every
@@ -157,16 +187,17 @@ Phase 6 does not build breadth (Q8); it decides which breadth to build, from one
   `get` with an empty key, which LeanKV refuses as a limit error. Either a real no-op in LeanKV's
   command set, or template guidance; a LeanKV change is a new LeanKV spec version.
 - **Benchmark harness in the templates** (asked for in `examples/kvstore/FRICTION.md`): the two
-  known traps handled (hoisted pure computations; timing the driver's own escaping).
+  known traps handled (hoisted pure computations; timing the driver's own escaping); **needed by W3**, so it
+  comes before W3.
 - **CLAUDE.md status** updated when Phase 6 starts and when it ends.
 
 ## Order and size
 | Step | Size | Blocks |
 |---|---|---|
 | W0 | about 1 session | everything |
-| W1 | about 2 sessions | W2's "prints a constant" cheat, W3's spike (uses selftest) |
+| W1 | about 2 sessions | W2's "prints a constant" cheat, W3 (its gates apply to the briefs) |
 | W2 | 1 red-team run + 5 tasks × 2 arms; estimate tokens before starting | approval |
-| W3 | 1 spike session + the user's decision | W1 |
+| W3 | about 1 session per brief + write-up; the user's time at two gates per brief | W1, the benchmark harness |
 | Small items | under 1 session each | W0 |
 
 ## Decisions needed from the user
@@ -186,11 +217,16 @@ Phase 6 does not build breadth (Q8); it decides which breadth to build, from one
    with every surviving mutant explained in `TRUST.md`).
 3. **D3, W2 budget and agent.** Which agent runs the red team and the framework arm (Claude, or
    Codex on the user's OpenAI account as in Experiment B), and a token cap for W2.
-4. **D4, W3 spike target.** Which existing module the spike uses (one the user owns, or a small
-   open-source one).
+4. **D4, W3 briefs.** The three briefs, written before W3 starts: one control that fits a current
+   shape and two kinds of program that do not. The user writes or approves them, so the framework's
+   author cannot pick ones it handles well.
 
 ## Progress
 - 2026-11-25: plan drafted from the adversarial review. The user chose D1 (a) and started W0.
+- 2026-11-25: **W3 redefined by the user.** MakeItLean is a general tool for new programs written in
+  Lean, of any kind; optimisation is welcome but not required. W3 no longer designs a spike
+  around one app (an earlier draft prescribed server fast paths); it measures, with the framework
+  frozen, how far three different kinds of program get.
 - 2026-11-25, **W0 (uncommitted).**
   - **Q3 reproduced before fixing it.** With the honest template `audit.lean` in place, an impl
     lakefile requiring a copy of `lean/` vendored at `impl/vendor_lean` (its `#audit_verified` a
