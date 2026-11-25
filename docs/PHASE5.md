@@ -332,6 +332,23 @@ agent says it can't be done.** Pre-register before running:
     cases: the exact false positive, plus true writes by `-c`, by heredoc with an argument, and
     after a read; test_guards 134/134. A conservative block remains by design: inline Python that
     names a frozen file, even to read it.
+- **2026-11-25 · W4 (Experiment B), set up.** The user approved the Stockroom brief and protocol
+  above.
+  - **CI fix (6aeca02):** CI now checks out the full history. Lake's git fetch (`--filter=tree:0`)
+    hangs against a shallow repository, which made `all.sh` step 9 fail in CI.
+  - **Setup:** `~/stockroom-exp/` (its own git repository, outside the checkout).
+    `mil init --agent codex Stockroom stockroom` pins the framework to `6aeca02` on GitHub.
+  - **Install path checked before the run:**
+    - the dependencies were fetched from GitHub and built (spec 35 s, impl 25 s, one shared clone);
+    - the untouched template was judged ACCEPTED.
+  - **Codex** CLI 0.172 (Linux build). The user runs it interactively and answers the gates alone.
+  - **Run notes.**
+    - Stage 0: Codex stopped with a draft `REQUIREMENTS.md` and `[DECIDE]` items; the user answered alone.
+    - Stage 2: Codex stopped before freezing (no `spec.lock`), but did not run `mil review` or show
+      `SPEC_REVIEW.md` as AGENTS.md says; the user generated it.
+    - **Framework bug found:** `mil review` failed on an external app (the git copy of
+      `MakeItLean.Review` was never built). Fixed mid-run, since `mil` is not part of the app's pin:
+      it now runs `lake build <spec> MakeItLean.Review` first; `all.sh` step 9 now runs `mil review`.
 - Friction: the lock guard blocks a *read-only* command that names a frozen file when the same
   command has an inline `python3 -c` (the inline-interpreter rule counts every named file as
   written). Seen with `grep … examples/kvstore/lakefile.lean; python3 -c …`. Workaround: split

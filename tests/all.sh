@@ -115,6 +115,8 @@ PY
   check 'Build completed' bash -c "cd '$EXT/zextapp' && lake build"
   check 'ACCEPTED' "$MIL" judge "$EXT/zextapp/mil.json"
   check 'passed|consistent|agree' "$EXT/zextapp/impl/test.sh"
+  check 'wrote SPEC_REVIEW' "$MIL" review "$EXT/zextapp/mil.json"
+  [ -s "$EXT/zextapp/SPEC_REVIEW.md" ] || { echo "FAILED: mil review wrote no SPEC_REVIEW.md"; exit 1; }
   check 'Frozen' "$MIL" freeze "$EXT/zextapp/mil.json" ci-external-check
   check 'AUDIT' "$MIL" audit "$EXT/zextapp/mil.json"
   check 'created|wrote' bash -c "cd '$EXT' && '$MIL' init --pure --agent codex Zextpure zextpure"

@@ -314,6 +314,8 @@ def review (cfgPath : FilePath) : IO Unit := do
   let base := cfgPath.parent.getD "."
   let pfx := cfg.specModule
   IO.FS.writeFile (base / ".mil_review.lean") s!"import {pfx}\nimport MakeItLean.Review\n#spec_review {pfx} \"SPEC_REVIEW.md\"\n"
+  -- An external app's build never imports MakeItLean.Review, so its git copy is not built yet.
+  run "lake" #["build", pfx, "MakeItLean.Review"] base
   run "lake" #["env", "lean", ".mil_review.lean"] base
   IO.FS.removeFile (base / ".mil_review.lean")
   -- The evidence a reviewer most wants: the executable examples and the spec critic's checks.
