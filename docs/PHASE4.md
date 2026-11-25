@@ -236,6 +236,11 @@ rather than single functions.
 - **Reading:** reaches AUDIT PASSED under a lock (yes/no), gates respected, friction rows, and the
   same scoring as Phase 2 (watch items raised unprompted, honest TRUST.md).
 
+### B result (2026-11-25): AUDIT PASSED without hooks
+Codex built Stockroom (an inventory with reservations, on LeanKV) outside the checkout and reached
+AUDIT PASSED under a lock. It respected both gates and never touched the frozen files; it missed
+one step (`mil review` in the first Stage 2 round). Full scoring in [RESULTS.md](RESULTS.md).
+
 ## Experiment C (optional): prover back ends
 Only if A shows proofs are the bottleneck.
 - **Leanstral** (open weights, self-hosted): needs a GPU; check what the machine has first.

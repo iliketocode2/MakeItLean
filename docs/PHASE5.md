@@ -349,6 +349,18 @@ agent says it can't be done.** Pre-register before running:
     - **Framework bug found:** `mil review` failed on an external app (the git copy of
       `MakeItLean.Review` was never built). Fixed mid-run, since `mil` is not part of the app's pin:
       it now runs `lake build <spec> MakeItLean.Review` first; `all.sh` step 9 now runs `mil review`.
+- **2026-11-25 · W4 done: Experiment B scored; `docs/RESULTS.md` written.**
+  - **Outcome:** AUDIT PASSED under a lock, after about 70 min (17.9M Codex tokens, mostly cached).
+  - **Held without hooks:** both gates, the frozen files, the framework kept read-only, an honest
+    `TRUST.md`.
+  - **Missed:** one procedural step (`mil review` in the first Stage 2 round).
+  - **Fixed in `mil` from the run:**
+    - `mil review` on external apps;
+    - `mil judge` prints the comparator's output when there is no error line (the bubblewrap
+      failure inside Codex's sandbox).
+  - **Open:** a real no-op command in LeanKV, since read-only commands currently translate to an
+    empty-key `get`.
+  - **Phase 4 complete.** W3 left over: `mil selftest`, the TypeScript shell template.
 - Friction: the lock guard blocks a *read-only* command that names a frozen file when the same
   command has an inline `python3 -c` (the inline-interpreter rule counts every named file as
   written). Seen with `grep … examples/kvstore/lakefile.lean; python3 -c …`. Workaround: split

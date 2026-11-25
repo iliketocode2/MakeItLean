@@ -226,6 +226,12 @@ def stagedComparator (implDir : FilePath) (judgeCfg : Json) (paranoid : Bool) : 
     let out ← IO.Process.output { cmd := "lake", args, cwd := stage }
     let errs := ((out.stdout ++ out.stderr).splitOn "\n").filter (·.startsWith "error")
     if out.exitCode == 0 then IO.println "ACCEPTED: all obligations proven against the spec"
+    else if errs.isEmpty then
+      -- no verdict lines: usually the sandbox or the environment, not the proofs (Experiment B:
+      -- bubblewrap blocked inside Codex's sandbox printed only a generic child failure)
+      let lines := ((out.stdout ++ out.stderr).splitOn "\n").filter (!·.isEmpty)
+      die ("REJECTED (no error lines: check the environment, e.g. bubblewrap; MIL_KEEP_JUDGE=1 keeps the stage). Comparator output ends:\n"
+        ++ "\n".intercalate (lines.drop (lines.length - 25)))
     else die ("REJECTED:\n" ++ "\n".intercalate errs)
   finally
     if (← IO.getEnv "MIL_KEEP_JUDGE").isSome then IO.eprintln s!"staged judge kept at {stage}"
