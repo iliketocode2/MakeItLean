@@ -186,6 +186,44 @@ possible, so a rescued task is re-run with the baseline too).
    go to Experiment B.
 The freeze step is done by the orchestrator from now on (it cost a fixed-context agent per task).
 
+### A2 result (2026-11-23)
+**Screen** (`bench/verina/screen_score.py`): the single-agent baseline on the 62 remaining
+eligible advanced tasks. 62 done, 0 halted (46 were cut by the usage limit and re-run from fresh
+workspaces). **58 / 62 fully correct**: code right, spec sound and complete on every test, proof on
+the standard axioms. 4 baseline failures, all in the *spec*, none in a proof:
+
+| Task | Baseline (1st) | Framework | Baseline retry | What it really was |
+|---|---|---|---|---|
+| advanced_52 | precondition rejects a test input | same | passes | **benchmark defect:** the failing test has `k = 0`; the description says k is positive. The framework followed the description. |
+| advanced_70 | precondition too weak | **fixed** | fixed | genuine spec error |
+| advanced_72 | answers 2 for `n = 0` (VERINA expects 0) | **halted** on the ambiguity, as the protocol requires | passes (guessed the other way) | **genuine ambiguity:** every prime divides 0; the description does not settle it |
+| advanced_73 | precondition too weak | **fixed** | still too weak | genuine spec error |
+
+**Reading.**
+1. **Ceiling.** With batch 1, the baseline is fully correct on 63 of 67 advanced and basic tasks
+   (94%); VERINA's published proof rate for o3 (4.9%) does not transfer to this model in this
+   setting. No proof failed in either arm, ever.
+2. **Where the framework differs, it is in the spec.** On the 2 genuine spec errors, the framework
+   fixed **2 / 2**, a plain retry fixed **1 / 2**. On the ambiguous task the framework **halted
+   and named both readings** instead of guessing (the baseline's two tries guessed opposite ways).
+   On the defective test it followed the description over the test. All of this is n = 4: a
+   direction, not evidence; selection on baseline failure means regression to the mean is
+   expected (the retry shows it).
+3. **Cost.** The framework costs about **6×** the tokens of a single agent per task (≈ 250k vs
+   ≈ 43k; the freeze agent alone is ≈ 39k and could be removed).
+4. **Benchmark quality matters at this level.** 2 of the 4 "failures" are VERINA's: a test that
+   contradicts its description, and an underspecified edge case. At a 94% baseline, benchmark
+   noise is the same size as the effect being measured.
+
+**Tokens spent on A2:** batch 1 1.55M, screen 2.80M (including the interrupted part), rescue
+1.01M: **≈ 5.4M** of the approved 11–17M.
+
+**Conclusion for experiment A.** On VERINA, the current model does not need the framework to get
+correct verified code; the framework's measurable contribution is in spec fidelity (2/2 vs 1/2) and
+in halting on ambiguity rather than guessing, at about 6× the cost. A benchmark that separates the
+arms needs harder tasks (whole applications, stateful or multi-function specs, as in Phases 2–3)
+rather than single functions.
+
 ## Experiment B: another agent through AGENTS.md
 - **Task:** the same as Phase 2's exit test (a fresh app from a one-paragraph brief, two user
   gates), with a new small app so no agent has seen the answer, e.g. an inventory with

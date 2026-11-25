@@ -7,7 +7,7 @@ For each task in runs/a2/batchN.json:
   native_decide, no custom axiom), then score.py
 Writes runs/a2/batchN_scores.json and prints a table.
 
-usage: batch_score.py N
+usage: batch_score.py N | PATH.json   (N: runs/a2/batchN.json)
 """
 import json, os, re, subprocess, sys, tempfile
 
@@ -70,7 +70,8 @@ def flat(s):
 
 def main():
     n = sys.argv[1]
-    batch = json.load(open(os.path.join(ROOT, "bench", "verina", "runs", "a2", f"batch{n}.json")))
+    src = n if n.endswith(".json") else os.path.join(ROOT, "bench", "verina", "runs", "a2", f"batch{n}.json")
+    batch = json.load(open(src))
     res = []
     for t in batch["tasks"]:
         fp = framework_proof(t["fdir"])
@@ -79,7 +80,7 @@ def main():
         res.append({"task": t["task"], "framework": {**fp, "score": fs}, "baseline": {**bp, "score": bs}})
         print(f"{t['task']:20} framework: lock={'ok' if fp['lock_ok'] else 'CHANGED'} proof={'ACCEPTED' if fp['accepted'] else 'no'} {flat(fs)}")
         print(f"{'':20} baseline:  builds={bp['builds']} proof={'ok' if bp['accepted'] else 'no ' + str(bp['axioms'])} {flat(bs)}")
-    json.dump(res, open(os.path.join(ROOT, "bench", "verina", "runs", "a2", f"batch{n}_scores.json"), "w"), indent=1)
+    json.dump(res, open(src.replace(".json", "_scores.json"), "w"), indent=1)
 
 
 if __name__ == "__main__":

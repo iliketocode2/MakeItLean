@@ -1,5 +1,0 @@
-{"theorem_names": ["VerinaBasic101.Spec.impl_Triple_ok"],
- "solution_module": "VerinaBasic101Sol.Holes",
- "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
- "definition_names": ["VerinaBasic101.Spec.Impl.Triple"],
- "challenge_module": "VerinaBasic101.Spec"}

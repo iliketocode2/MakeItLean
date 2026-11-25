@@ -1,5 +1,0 @@
-{"theorem_names": ["VerinaBasic108.Spec.impl_below_zero_ok"],
- "solution_module": "VerinaBasic108Sol.Holes",
- "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
- "definition_names": ["VerinaBasic108.Spec.Impl.below_zero"],
- "challenge_module": "VerinaBasic108.Spec"}
