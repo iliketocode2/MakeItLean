@@ -40,6 +40,9 @@ Each item cost real time in the pilot. Check here before fighting a tactic.
   workspaces. With git dependencies each clones its own copy, and the build products disagree
   ("unknown module prefix" for a module that built fine). The templates set
   `packagesDir := "../.lake/packages"` in `impl/` so there is one clone (Phase 5).
+- **A git `require` from a shallow clone hangs.** Lake fetches with `--filter=tree:0`, which
+  deadlocks against a shallow source repository (CI's default `actions/checkout`). Require from a
+  full-history repository (`fetch-depth: 0` in CI).
 - **Benchmarks: the compiler hoists pure computations out of a timing loop** ("0 µs"). Vary the
   input on every repetition, and build request text before the timer starts.
 

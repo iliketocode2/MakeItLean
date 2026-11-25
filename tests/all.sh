@@ -104,6 +104,10 @@ PY
 
   step "9. Apps outside the checkout: framework by pinned git require (this checkout's HEAD)"
   # Only committed framework code reaches these apps (they clone HEAD): CI tests exactly the commit.
+  # Lake fetches with --filter=tree:0, which hangs against a shallow repository: fail fast instead.
+  if [ "$(git -C "$ROOT" rev-parse --is-shallow-repository)" = true ]; then
+    echo "FAILED: $ROOT is a shallow clone; step 9 needs full history (git fetch --unshallow, or fetch-depth: 0 in CI)"; exit 1
+  fi
   export MIL_GIT_URL="$ROOT" MIL_GIT_REV="$(git -C "$ROOT" rev-parse HEAD)"
   check 'created|wrote' bash -c "cd '$EXT' && '$MIL' init --agent claude Zextapp zextapp"
   grep -q "from git \"$ROOT\" @ \"$MIL_GIT_REV\"" "$EXT/zextapp/lakefile.lean" || { echo "FAILED: no pinned git require"; exit 1; }
