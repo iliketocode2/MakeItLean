@@ -102,6 +102,9 @@ PY
   grep -q 'does not cover exactly' /tmp/mil-lock.$$ || { echo "FAILED: wrong lock error"; cat /tmp/mil-lock.$$; exit 1; }
   rm -f /tmp/mil-lock.$$; echo "lock coverage: a dropped spec.lock line is a MISMATCH"
 
+  step "8d. The cheat suite: every known way to a false AUDIT PASSED is rejected (Phase 6 W0)"
+  check 'control:|cheat rejected|cheats:' "$ROOT/tests/cheats/run.sh"
+
   step "9. Apps outside the checkout: framework by pinned git require (this checkout's HEAD)"
   # Only committed framework code reaches these apps (they clone HEAD): CI tests exactly the commit.
   # Lake fetches with --filter=tree:0, which hangs against a shallow repository: fail fast instead.

@@ -19,5 +19,24 @@
     "Counter/Spec/Model.lean",
     "Counter/Spec/Properties.lean",
     "Counter/Spec/Contract.lean"
-  ]
+  ],
+  "audit": {
+    "verified": [
+      "CounterImpl.Core",
+      "CounterImpl.Proofs"
+    ],
+    "shell": [
+      "CounterImpl.Shell",
+      "CounterImpl.Text",
+      "CounterImpl.Oracle"
+    ],
+    "substrate": {
+      "state": "Counter.Spec.CState",
+      "cmd": "Counter.Spec.CCmd",
+      "pick": "CounterImpl.pick",
+      "pick_ok": "CounterImpl.pickOk",
+      "refines": "CounterImpl.refines",
+      "crash_consistent": "CounterImpl.crash_consistent"
+    }
+  }
 }

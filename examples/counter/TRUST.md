@@ -14,7 +14,7 @@ every claim, including that every theorem named here exists.
 | Layout | The LeanKV store stands for the model's counters | Proven | `decodeU64_u64le`, `pickRef_refines` |
 | Implementation | Fast `pick` = reference `pickRef` | Proven, comparator ACCEPTED | `CounterImpl.pick_ok` (fills `impl_pick_ok`), `countOf_eq` |
 | Shell | `serve` and the CLI answer exactly as the model: parsing, the answer chosen, printing, state carried across commands | **Tested against the model** | `difftest`: `counter <dir> serve` on real files vs `counter-oracle` (the spec's `cstep` from the empty state, `CounterImpl/Oracle.lean`); 30 runs × 200 random commands including every command, the usage error and the name limits; a planted wrong answer is caught and shrunk to 3 commands |
-| R3 | Acknowledged increments persist; after a crash, the state is exactly the acknowledged commands plus possibly the one in flight | Proven on LeanKV's model file system, tested | `CounterImpl.crash_consistent` (LeanKV's `app_crash_consistent` with `pickOk` and `refines`, pinned to the frozen spec in `impl/audit.lean`); `kill_test` |
+| R3 | Acknowledged increments persist; after a crash, the state is exactly the acknowledged commands plus possibly the one in flight | Proven on LeanKV's model file system, tested | `CounterImpl.crash_consistent` (LeanKV's `app_crash_consistent` with `pickOk` and `refines`, pinned to the frozen spec by `mil audit` from `mil.json`'s `audit` section); `kill_test` |
 
 ## Trusted, not verified
 

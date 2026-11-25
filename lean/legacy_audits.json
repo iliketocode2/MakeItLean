@@ -1,0 +1,6 @@
+{
+  "_comment": "Verified-code audits of apps frozen before mil generated the audit (Phase 6 W0, decision D1 (a)). mil audit runs an app's own impl/audit.lean only if its sha256 is listed here. Framework-owned: no app role may edit it. Never add an entry without reading the file it pins.",
+  "audits": [
+    {"app": "examples/ledger (ledger-v1)", "file": "impl/audit.lean", "sha256": "c210b49e23749d00abfcd1a82ed76c8b5887e015d0837729c96e3cbbab3b76c0"}
+  ]
+}

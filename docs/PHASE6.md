@@ -1,4 +1,4 @@
-# Phase 6: hold the guarantee under attack, then choose a direction (draft, 2026-11-25; not yet approved)
+# Phase 6: hold the guarantee under attack, then choose a direction (2026-11-25; the user started W0 with D1 (a); D2–D4 open)
 
 Source: the adversarial review of 2026-11-25. Phases 1–5 showed that agents *can follow* the
 workflow (Ledger, Experiment B). They did not show that the workflow *cannot be gamed*, and the
@@ -50,7 +50,9 @@ runs out after it.
    - `mil audit` also pins `crash_consistent`'s statement: a third generated `example` re-derives
      it with `app_crash_consistent` from the pinned facts, so the name `TRUST.md` cites is the one
      the framework built.
-   - **Legacy apps** (no new fields): see D1.
+   - **Legacy apps** (no `audit` section): D1 (a), as built: the app's own `impl/audit.lean` runs
+     only if its sha256 is listed in the framework-owned `lean/legacy_audits.json` (Ledger's is the
+     one entry), with a warning. Nothing is derived; the file is fixed by hash.
 2. **The spec's dependencies are locked too (Q3).**
    - First reproduce Q3: a forked `lean/` whose `#audit_verified` is a no-op, required from the
      impl lakefile of a fresh app. Record whether Lake resolves it.
@@ -168,8 +170,9 @@ Phase 6 does not build breadth (Q8); it decides which breadth to build, from one
 | Small items | under 1 session each | W0 |
 
 ## Decisions needed from the user
-1. **D1, legacy apps (Ledger's `ledger-v1` lock).** Ledger's locked `mil.json` has none of the W0.1
-   fields. Options:
+1. **D1, legacy apps (Ledger's `ledger-v1` lock). Decided 2026-11-25: (a)**, built as a hash pin
+   of the app's whole `audit.lean` (simpler than deriving the prefixes, and as strict). Ledger's
+   locked `mil.json` has none of the W0.1 fields. Options were:
    - **(a) Fallback:** without the fields, `mil` derives the prefixes from `solution_imports`
      (`LedgerImpl.Proofs` → `LedgerImpl.*` minus `Shell`, `Text`, `Oracle`) and takes the type
      names from the app's existing `audit.lean` only if its sha256 is listed in a framework-owned
@@ -187,4 +190,55 @@ Phase 6 does not build breadth (Q8); it decides which breadth to build, from one
    open-source one).
 
 ## Progress
-- 2026-11-25: plan drafted from the adversarial review; awaiting the user's approval and D1–D4.
+- 2026-11-25: plan drafted from the adversarial review. The user chose D1 (a) and started W0.
+- 2026-11-25, **W0 (uncommitted).**
+  - **Q3 reproduced before fixing it.** With the honest template `audit.lean` in place, an impl
+    lakefile requiring a copy of `lean/` vendored at `impl/vendor_lean` (its `#audit_verified` a
+    no-op), plus `lake update`, gave `spec.lock OK` and **AUDIT PASSED** on an `implemented_by`
+    cheat. A copy at an absolute path outside the app failed only because the comparator's sandbox
+    could not see it.
+  - **W0.1, generated audit.** `mil.json` gains an `audit` section (`verified`, `shell`, and for a
+    substrate app `substrate`: `state`, `cmd`, `pick`, `pick_ok`, `refines`, `crash_consistent`).
+    `mil audit` writes `impl/.mil_audit.lean` from it: `#audit_verified` over the listed prefixes
+    plus the solution's root, and for a substrate app three pinning `example`s (`refines`,
+    `pickOk`, and `crash_consistent`'s full statement against the spec's `dec`, `cstep`, `pickRef`).
+    It also requires that a hole is filled with `audit.substrate.pick`, so the pinned facts are
+    about the code the comparator checked.
+    - `impl/audit.lean` removed from both templates and from Counter (unfrozen, so its `mil.json`
+      gained the section). Ledger runs in legacy mode (D1).
+  - **W0.2, dependencies.** For an app with an `audit` section, `spec.lock` also covers the spec's
+    `lake-manifest.json`. `mil judge`, after its builds, checks:
+    - `impl/lakefile.lean`'s only `require` is the spec package;
+    - `impl/` defines no module under `MakeItLean`, `MakeItLeanTest`, `LeanKV`, `LeanKVImpl`,
+      `LeanKVSol`, `Mil` or the spec's root;
+    - the impl manifest resolves exactly the spec package plus the spec manifest's packages, each to
+      the same real path or git commit;
+    - after the staged `lake update`, the staged workspace resolved exactly the staged copies of
+      those packages (or the same commits).
+
+    These checks apply to every app, legacy ones included; only the manifest lock is new-format only.
+  - **W0.3, cheat suite** `tests/cheats/` (`all.sh` step 8d): 8 cheats, all rejected for the
+    expected reason, after two controls (an honest pure app and an honest substrate app, frozen,
+    AUDIT PASSED). About 4 min.
+
+    | Cheat | Rejected by |
+    |---|---|
+    | `implemented-by-gutted-audit` (Q1) | generated audit: `implemented_by` |
+    | `vendored-gates` (Q3) | dependency check: lakefile `require` |
+    | `shadow-gates-module` | dependency check: reserved module root |
+    | `manifest-fork` (lakefile honest, manifest edited) | dependency check: manifest |
+    | `drop-audit-section` | lock (`mil.json` changed) |
+    | `legacy-unknown-audit` (frozen without the section) | legacy hash list |
+    | `crash-consistent-weakened` (`: True`) | generated pinning `example` |
+    | `pick-not-the-filled-hole` | hole-fill check |
+  - **Docs:** AGENTS.md (the `mil.json` row, the Proofs row, hard rule 1), the template's and
+    Counter's `TRUST.md` R3 rows.
+  - **Not covered, on purpose or not yet:**
+    - The cheats from the plan's table that W0 cannot test: a dropped `spec.lock` line stays in
+      `all.sh` 8c; a weakened obligation stays in the comparator smoke test; "prints a constant"
+      waits for W1's selftest.
+    - Apps frozen before W0 outside this repository (Experiment B's Stockroom, the VERINA bench
+      runs) now fail `mil audit` with "not a known legacy audit": they need the `audit` section and
+      a new sign-off, or a reviewed hash entry.
+    - LeanKV's own audit (`examples/kvstore/tools/audit.sh`) is framework code, not agent-written,
+      and is unchanged.

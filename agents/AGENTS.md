@@ -21,12 +21,12 @@ The worked example is **`examples/counter/`**. Read it end to end before writing
 | `<App>/Spec/Contract.lean` | **Only** the implementation hole(s) and their obligations. Keep holes in this separate file. `def Impl.pick : Tree → Cmd ByteArray → LeanKV.Spec.Cmd ByteArray := sorry` and `theorem impl_pick_ok … : (Impl.pick t c).map toBytes = pickRef t.toList (c.map toBytes) := sorry`. |
 | `<App>/Spec.lean` | Imports plus the three gates (`#assert_english_docs`, `#assert_holes_only_in_theorems`, `#assert_spec_axioms`). |
 | `impl/<App>Impl/Core.lean` | The implementation of `pick` on the in-memory `Tree`, reading it with `LeanKV.Core.lookup` (proven equal to the reference lookup). |
-| `impl/<App>Impl/Proofs.lean` | The proof of the obligation (see `CounterImpl.pick_ok`: `toList_lookup` bridges `Core.lookup` to the spec), then `pickOk`, `refines` and `crash_consistent` (keep the template's; `impl/audit.lean` pins them to the frozen spec). |
+| `impl/<App>Impl/Proofs.lean` | The proof of the obligation (see `CounterImpl.pick_ok`: `toList_lookup` bridges `Core.lookup` to the spec), then `pickOk`, `refines` and `crash_consistent` (keep the template's names; `mil audit` pins all three to the frozen spec, from `mil.json`'s `audit.substrate`). |
 | `impl/<App>Impl/Shell.lean` | The CLI: open the store on real files (`LeanKV.Shell.lkvOpen`, `RealM`), run `LeanKV.Core.execPick`, print answers. Trusted, not verified: keep it thin. |
 | `impl/<App>Impl/Text.lean` | The line protocol: `parseCmd` (words → command) and `render` (answer → line). Shared by the CLI, `serve` and the oracle. Trusted. |
 | `impl/<App>Impl/Oracle.lean` | `<app>-oracle`: reads protocol lines and answers with the **spec's** `cstep` from the empty state. The reference model as a process, for differential tests. |
 | `impl/tests/gen_commands.py` | `gen(rng, n)`: random protocol lines for `tools/difftest.py`; must reach every command, every error and every limit a test can reach. |
-| `mil.json` | Which files hold holes, the **names** of the holes and obligations, which files the lock covers. Locked at the freeze. |
+| `mil.json` | Which files hold holes, the **names** of the holes and obligations, which files the lock covers, and the `audit` section: the verified module prefixes, the shell prefixes, and for a substrate app the end-to-end facts (`state`, `cmd`, `pick`, `pick_ok`, `refines`, `crash_consistent`). `mil audit` generates the verified-code audit from it. Locked at the freeze, together with the spec's `lake-manifest.json`. |
 | `impl/fill.json` | How each hole and obligation is filled (the Lean terms). Not locked, so Stage 4 never touches a frozen file. |
 | `impl/test.sh`, `impl/tests/` | Stage 5: the CLI test (every example, error and limit) and the kill test. Skeletons from the template. |
 | `TRUST.md` | Stage 6: each requirement proven / tested / trusted, citing theorem names (`mil audit` checks they exist). |
@@ -62,7 +62,7 @@ Never skip a gate. Stages 0 and 2 end with **the user's explicit approval**. Ask
 | 6 | Audit | `TRUST.md`: each requirement proven / tested / trusted, citing theorem names. Durability cites `<App>Impl.crash_consistent`. | `mil audit examples/<app>/mil.json` prints **AUDIT PASSED** (it requires `spec.lock` and checks every name `TRUST.md` cites). |
 
 ## Hard rules (each one was learned the hard way)
-1. **Never edit a frozen spec** (files listed in `spec.lock`), and never edit `examples/kvstore/` or `lean/`. If the spec is wrong, stop and tell the user.
+1. **Never edit a frozen spec** (files listed in `spec.lock`), and never edit `examples/kvstore/` or `lean/`. If the spec is wrong, stop and tell the user. The implementation builds against exactly the spec's dependencies: `impl/lakefile.lean` requires only the spec package, and `impl/` never holds modules under `MakeItLean`, `LeanKV*` or the spec's root. `mil judge` refuses anything else.
 2. **Verified code** (Core, Proofs, the generated solution) may not contain `sorry`, custom `axiom`s, `native_decide`, `bv_decide`, `partial def`, `unsafe`, `opaque`, `@[implemented_by]` or `@[extern]`. Only `propext`, `Quot.sound`, `Classical.choice` are allowed. `mil audit` checks all of this on compiled code.
 3. **Spec definitions never call a hole.** Only theorem statements name holes; a definition that needs the implementation takes it as a parameter. Otherwise the comparator rejects every solution (`#assert_holes_only_in_theorems` enforces this).
 4. **Every spec declaration has an `English:` doc** that a non-expert can check against `REQUIREMENTS.md`.

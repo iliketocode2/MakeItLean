@@ -20,5 +20,12 @@
     "AppName/Spec/Model.lean",
     "AppName/Spec/Properties.lean",
     "AppName/Spec/Contract.lean"
-  ]
+  ],
+  "audit": {
+    "verified": [
+      "AppNameImpl.Core",
+      "AppNameImpl.Proofs"
+    ],
+    "shell": []
+  }
 }

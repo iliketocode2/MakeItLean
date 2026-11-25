@@ -19,5 +19,24 @@
     "AppName/Spec/Model.lean",
     "AppName/Spec/Properties.lean",
     "AppName/Spec/Contract.lean"
-  ]
+  ],
+  "audit": {
+    "verified": [
+      "AppNameImpl.Core",
+      "AppNameImpl.Proofs"
+    ],
+    "shell": [
+      "AppNameImpl.Shell",
+      "AppNameImpl.Text",
+      "AppNameImpl.Oracle"
+    ],
+    "substrate": {
+      "state": "AppName.Spec.CState",
+      "cmd": "AppName.Spec.CCmd",
+      "pick": "AppNameImpl.pick",
+      "pick_ok": "AppNameImpl.pickOk",
+      "refines": "AppNameImpl.refines",
+      "crash_consistent": "AppNameImpl.crash_consistent"
+    }
+  }
 }
